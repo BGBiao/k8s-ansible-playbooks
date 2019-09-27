@@ -1,0 +1,13 @@
+{
+	"auths": {
+		"harbor.bgbiao.cn": {
+			"auth": "YWRtaW46SGFyYm9yMTIzNDU="
+		},
+		"registry.cn-hangzhou.aliyuncs.com": {
+			"auth": "ZG9uZ3F1YW55aUBzb3VsYXBwOm55aW5lLnpoMQ=="
+		}
+	},
+	"HttpHeaders": {
+		"User-Agent": "Docker-Client/18.09.6 (linux)"
+	}
+}

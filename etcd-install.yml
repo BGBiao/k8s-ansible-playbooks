@@ -1,0 +1,70 @@
+---
+- hosts: "{{ host }}"
+  remote_user: root
+  vars:
+    #hostip: "{{ ansible_all_ipv4_addresses[0] }}"
+    #hostip: "{{ inventory_hostname }}"
+    hostip: "{{ ansible_default_ipv4.address }}"
+    # hosts文件中传过来的nodename
+    node_name: "{{ nodename }}"
+    #etcd_version: etcd-v3.4.1-linux-amd64
+    etcd_version: etcd-v3.3.11-linux-amd64
+    app: etcd
+    # 证书和配置
+    cfg_dir: "{{ base_dir }}{{ app }}/cfg/"
+    ssl_dir: "{{ base_dir }}{{ app }}/ssl/"
+    data_dir: "{{ base_dir }}{{ app }}/data/"
+    # 所有的二进制文件都放置在/usr/bin/下面了
+    bin_dir: "{{ base_dir }}{{ app }}/bin/"
+    cluster_token: etcd_cluster_new
+    etcd_conf: "{{ cfg_dir }}etcd.conf"
+    # 每个节点id需要分别为etcd01,etcd02,etcd03
+    etcd_url: "etcd01=https://172.29.202.145:2380,etcd02=https://172.29.202.155:2380,etcd03=https://172.29.202.151:2380"
+  vars_files:
+    - vars/varsfile.yml
+  tasks:
+  - name: "test ping"
+    ping:
+  - name: "init env"
+    shell: "mkdir -p {{ base_dir }} {{ cfg_dir }} {{ ssl_dir }} {{ data_dir }} {{ bin_dir }} {{ package_dir }} {{ server_dir }}"
+
+
+  - name: "wget {{ etcd_version }}"
+    get_url:
+     url: "{{ item.url }}"
+     dest: "{{ item.dest }}"
+     mode: 0644
+     owner: root
+     group: root
+    with_items:
+        - { url: "{{ download_url }}{{ etcd_version }}.tar.gz" , dest: "{{ package_dir }}" }
+
+  - name: "untar the {{ etcd_version }}"
+    unarchive:
+     src: "{{ item.src }}"
+     dest: "{{ item.dest }}"
+     owner: root
+     group: root
+     remote_src: yes
+    with_items:
+      - { src: "{{ package_dir }}{{ etcd_version }}.tar.gz", dest: "{{ server_dir }}" }
+
+  - name: "copy the etcd execfile"
+    shell: "cp -rp {{ server_dir }}{{ etcd_version }}/etcd* /usr/bin/"
+
+  - name: "init the {{ app }} configuration!"
+    template:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      mode: 0755
+      owner: root
+      group: root
+    with_items:
+      #dest后面的引号与大括号中间一定不能有空格,还有后面引号的空格也要取消掉,不然文件会有空格
+      - { src: "templates/etcd-conf.j2", dest: "{{ etcd_conf }}" }
+      - { src: "templates/etcd.service.j2", dest: "/usr/lib/systemd/system/etcd.service" }
+      - { src: "etcd-ssl/etcd.pem", dest: "{{ ssl_dir }}" }
+      - { src: "etcd-ssl/etcd-key.pem", dest: "{{ ssl_dir }}" }
+      - { src: "ca-ssl/ca.pem", dest: "{{ ssl_dir }}" }
+      - { src: "ca-ssl/ca-key.pem", dest: "{{ ssl_dir }}" }
+

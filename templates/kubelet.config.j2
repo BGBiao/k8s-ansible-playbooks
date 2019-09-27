@@ -1,0 +1,35 @@
+kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+address: {{ hostip }}
+port: 10250
+readOnlyPort: 10255
+cgroupDriver: cgroupfs
+clusterDNS: ["10.253.0.250"]
+clusterDomain: cluster.local.
+failSwapOn: false
+authentication:
+  anonymous:
+    enabled: true
+# 最大运行pod限制
+maxPods: 60
+# 最大打开文件数
+maxOpenFiles: 1000000
+resolvConf: /etc/resolv.conf
+# 驱逐设置
+evictionHard:
+    memory.available:  "100Mi"
+# 当设置了system-reserved和kube-reserved就需要设置systemReservedCgroup和kubeReservedCgroup[默认:pods]
+enforceNodeAllocatable: ["pods","system-reserved"]
+# 需要增加--runtime-cgroups=/systemd/system.slice
+systemReservedCgroup: "/systemd/system.slice"
+# 需要增加--kubelet-cgroups=/systemd/system.slice
+#kubeletCgroups: "/systemd/system.slice"
+#kubeReservedCgroup: "/systemd/system.slice"
+#
+# kube和system保留资源
+kubeReserved:
+    cpu: "200m"
+    memory: "200Mi"
+systemReserved:
+    cpu: "200m"
+    memory: "200Mi"

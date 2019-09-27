@@ -1,0 +1,13 @@
+# docker的cgroup-driver默认是cgroupfs,而kubelet默认也是cgroupfs
+# 但是docker19.03在高版本内核上不支持指定cgroup-driver=systemd了
+KUBELET_OPTS="--logtostderr=false \
+--v=3  \
+--alsologtostderr=false \
+--runtime-cgroups=/systemd/system.slice \
+--log-dir={{ log_dir }}{{ app }} \
+--hostname-override={{ hostip }} \
+--kubeconfig={{ cfg_dir }}kubelet.kubeconfig \
+--bootstrap-kubeconfig={{ cfg_dir }}bootstrap.kubeconfig \
+--config={{ cfg_dir }}kubelet.config \
+--cert-dir={{ ssl_dir }} \
+--pod-infra-container-image=registry.cn-hangzhou.aliyuncs.com/google-containers/pause-amd64:3.0"

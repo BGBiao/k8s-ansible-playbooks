@@ -1,0 +1,1208 @@
+## k8s二进制生产环境安装
+
+
+### 基本依赖和二进制包
+
+**相关依赖资源下载**
+
+`注意:k8s相关资源需要科学上网才能下载`
+
+[k8s-v1.16](https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG-1.16.md)
+
+[k8s-v1.16-amd64](https://dl.k8s.io/v1.16.0/kubernetes-server-linux-amd64.tar.gz)
+
+[dokcer二进制包清单](https://download.docker.com/linux/static/stable/x86_64/)
+
+[etcd-v3.4.1](https://github.com/etcd-io/etcd/releases)
+
+[etcd-v3.4.1-amd64](https://github.com/etcd-io/etcd/releases/download/v3.4.1/etcd-v3.4.1-linux-amd64.tar.gz)
+
+[flanneld](https://github.com/coreos/flannel/releases)
+
+`k8s镜像包:`
+
+百度云盘备份的k8s-v1.16.0的二进制包:`链接:https://pan.baidu.com/s/16jiXa0LZZhgeYkwSs8tv9g  密码:0rl2`
+
+```
+# 使用上述百度云盘备份的k8s包地址进行下载
+➜  ls k8s-server-amd64-v1.16.0.tar.gz
+k8s-server-amd64-v1.16.0.tar.gz
+# 使用sha512sum计算压缩包的hash值,和官方k8s-v1.16中的二进制包hash值进行对比(一致则说明包没有被修改过)
+➜  sha512sum k8s-server-amd64-v1.16.0.tar.gz
+a6bdac1eba1b87dc98b2bf5bf3690758960ecb50ed067736459b757fca0c3b01dd01fd215b4c06a653964048c6a81ea80b61ee8c7e4c98241409c091faf0cee1  k8s-server-amd64-v1.16.0.tar.gz
+```
+
+
+
+**ansible免密认证**
+
+`注意:本系列文档统一使用ansible进行配置和部署管理`
+
+```
+# 安装ansible
+$ pip install ansible 
+ 
+# 使用ansible生成ssh秘钥
+$ ansible -i hosts all -m shell -a 'ssh-keygen -t rsa -P "" -f ~/.ssh/id_rsa' -k
+# 将sshkey添加到本地认证文件
+$ ssh-keyscan `cat hosts | grep 1` >> /root/.ssh/known_hosts
+# 将ansible本地公钥认证发放给各个节点(ssh-copy-id类似)
+$ ansible -i hosts all -m authorized_key -a "user=root state=present key=\"{{ lookup('file', '/root/.ssh/id_rsa.pub') }}\"" -k
+
+
+# 免密验证
+# 查看内核和getenforce
+$ ansible -i hosts all -m shell -a "uname -r && getenforce "
+172.29.202.145 | CHANGED | rc=0 >>
+3.10.0-862.el7.x86_64
+Disabled
+
+172.29.202.155 | CHANGED | rc=0 >>
+3.10.0-862.el7.x86_64
+Disabled
+
+172.29.202.151 | CHANGED | rc=0 >>
+3.10.0-862.el7.x86_64
+Disabled
+
+
+```
+
+### 主机初始化准备
+
+`注意:需要确保主机的时间和ntp是同步的(使用阿里云ecs这些是基础保障)`
+
+```
+# 设置时区,将当前系统时间写入硬件时钟,设置开启ntp
+timedatectl set-timezone Asia/Shanghai && timedatectl set-local-rtc 0 && timedatectl set-ntp yes
+```
+
+- 1. 升级内核
+- 2. 格式化数据盘
+- 3. 更新内核参数
+- 4. 关闭非必要服务(setenforce,firewalld)
+- 5. 加载内部必要模块
+
+**格式化数据盘**
+
+`注意:此步骤可直接略过，但通常生产或者需要维护稳定状态的的集群，建议设置成独立存储`
+
+```
+# 格式化数据盘(docker数据存储)
+## 使用独立的磁盘/dev/vdb创建分区或者在已有磁盘上创建独立分区/dev/vda2(使用剩余全部资源)
+# 将/dev/vdb正块盘进行分区
+$ ansible -i hosts all -m shell -a "echo -e 'm\nn\np\n\n\n\nt\n83\np\nw\nq\n' | fdisk /dev/vdb && partprobe && mkfs.ext4 /dev/vdb1 && mkdir /data && mount /dev/vdb1 /data"
+
+# 或者将/dev/vda 剩下的空间分给/dev/vda2
+$ ansible -i hosts all -m shell -a "echo -e 'm\nn\np\n2\n\n\nt\n2\n83\np\nw\nq\n' | fdisk /dev/vda && partprobe && mkfs.ext4 /dev/vda2 && mkdir /data -p && mount /dev/vda2 /data"
+
+# 查看磁盘挂载情况:
+$ ansible -i hosts master -m shell -a "df -H | grep /data"
+172.29.202.145 | CHANGED | rc=0 >>
+/dev/vda2       254G   63M  241G    1% /data
+
+172.29.202.155 | CHANGED | rc=0 >>
+/dev/vda2       254G   63M  241G    1% /data
+
+172.29.202.151 | CHANGED | rc=0 >>
+/dev/vda2       254G   63M  241G    1% /data
+
+# 设置磁盘自动挂载(指定分区)
+ansible -i hosts all -m shell -a "echo \$(blkid /dev/vda2 | awk  '{print \$2}') /data ext4 defaults 1 1 >> /etc/fstab && mount -a"
+
+```
+**关闭非必要服务**
+
+```
+# 关闭防火墙
+$ ansible -i hosts all -m   shell -a "systemctl stop firewalld && systemctl disable firewalld &&  yum install -y bash-completion"
+
+# 安装基础依赖包
+$ ansible -i hosts all -m shell -a "yum install -y conntrack ntpdate ntp ipvsadm ipset jq iptables curl sysstat libseccomp wget"
+
+# 确保selinue关闭
+$ ansible -i hosts all -m shell -a "sed -i '/SELINUX=/ s/enforcing/disabled/g' /etc/selinux/config && getenforce" 
+```
+
+**更新内核参数**
+
+```
+$ cat conf/k8s-sysctl.conf
+net.ipv4.tcp_keepalive_time = 600
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 10
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+net.ipv4.neigh.default.gc_stale_time = 120
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.default.rp_filter = 0
+net.ipv4.conf.default.arp_announce = 2
+net.ipv4.conf.lo.arp_announce = 2
+net.ipv4.conf.all.arp_announce = 2
+net.ipv4.ip_forward = 1
+net.ipv4.tcp_max_tw_buckets = 5000
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 1024
+net.ipv4.tcp_synack_retries = 2
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-arptables = 1
+net.netfilter.nf_conntrack_max = 2310720
+fs.inotify.max_user_instances = 8192
+fs.inotify.max_user_watches = 1048576
+fs.may_detach_mounts = 1
+fs.file-max = 67108864
+fs.nr_open = 67108864
+vm.swappiness = 0
+vm.overcommit_memory = 1
+vm.panic_on_oom = 0
+
+# 批量同步主机配置
+
+$ ansible -i hosts all -m copy -a "src=./conf/k8s-sysctl.conf dest=/etc/sysctl.d/k8s-sysctl.conf"
+
+```
+
+**加载内核模块**
+
+```
+# 需要加载的内核模块参数
+
+$ cat conf/ipvs.conf
+ip_vs
+ip_vs_rr
+ip_vs_wrr
+ip_vs_sh
+nf_conntrack
+br_netfilter
+
+# 同步全量的内核模块参数
+$ ansible -i hosts all -m copy -a "src=./conf/ipvs.conf dest=/etc/modules-load.d/ipvs.conf"
+
+# 加载内核模块参数
+$ ansible -i hosts all -m shell -a "systemctl enable --now systemd-modules-load.service"
+ 
+# 确认相关内核模块已经加载
+$ ansible -i hosts all -m shell -a 'lsmod |egrep " ip_vs_rr|br_netfilter"'
+
+```
+
+**更新内核**
+```
+$ cd packages
+$ export Kernel_Version=4.18.9-1
+$ wget  http://mirror.rc.usf.edu/compute_lock/elrepo/kernel/el7/x86_64/RPMS/kernel-ml{,-devel}-${Kernel_Version}.el7.elrepo.x86_64.rpm
+
+# 统一下载内核
+$ ansible -i hosts all -m shell -a "for i in kernel-ml-4.18.9-1.el7.elrepo.x86_64.rpm kernel-ml-devel-4.18.9-1.el7.elrepo.x86_64.rpm ;do wget http://dl.bgbiao.cn/soul/k8s/1.15/\$i;done"
+
+# 统一更新内核并修改内核参数
+# grubby --default-kernel 命令可查看当前使用的内核信息
+$ ansible -i hosts node[1:2] -m shell -a "yum localinstall kernel-ml-4.18.9-1.el7.elrepo.x86_64.rpm kernel-ml-devel-4.18.9-1.el7.elrepo.x86_64.rpm -y && grub2-set-default  0 && grub2-mkconfig -o /etc/grub2.cfg && grubby --default-kernel"
+
+# 重启机器使之完全生效
+$ ansible -i hosts all -m shell -a "reboot"
+$ ansible -i hosts all -m shell -a "uname -r && df -H | grep /data"
+172.16.21.28 | SUCCESS | rc=0 >>
+4.18.9-1.el7.elrepo.x86_64
+/dev/vdb1       106G   63M  101G   1% /data
+
+172.16.21.23 | SUCCESS | rc=0 >>
+4.18.9-1.el7.elrepo.x86_64
+/dev/vdb1       106G   63M  101G   1% /data
+
+172.16.21.27 | SUCCESS | rc=0 >>
+4.18.9-1.el7.elrepo.x86_64
+/dev/vdb1       106G   63M  101G   1% /data
+
+172.16.21.24 | SUCCESS | rc=0 >>
+4.18.9-1.el7.elrepo.x86_64
+/dev/vdb1       106G   63M  101G   1% /data
+
+172.16.21.26 | SUCCESS | rc=0 >>
+4.18.9-1.el7.elrepo.x86_64
+/dev/vdb1       106G   63M  101G   1% /data
+
+172.16.21.25 | SUCCESS | rc=0 >>
+4.18.9-1.el7.elrepo.x86_64
+/dev/vdb1       106G   63M  101G   1% /data
+
+```
+
+
+###  K8S集群部署
+
+`注意:在不是k8s集群时理应对集群做一个初始的规划`
+
+`注意:master节点上不部署flanneld可以吗?这样可以节约一些网段,但是为了监控服务状态，需要部署一些daemonset服务`
+
+ip | 节点角色 | 部署组件 | 备注 
+--- | --- | --- | ---
+172.16.21.23 | master | kube-apiserver,kube-controller-manager,kube-scheduler,etcd,docker,flanneld,kubelet,kube-proxy |  
+172.16.21.24 | master | kube-apiserver,kube-controller-manager,kube-scheduler,etcd,docker,flanneld,kubelet,kube-proxy | 
+172.16.21.25 | master | kube-apiserver,kube-controller-manager,kube-scheduler,etcd,docker,flanneld,kubelet,kube-proxy | 
+172.16.21.26 | node | docker,flanneld,kubelet,kube-proxy | 业务容器运行节点
+172.16.21.27 | node | docker,flanneld,kubelet,kube-proxy | 业务容器运行节点
+172.16.21.28 | node | docker,flanneld,kubelet,kube-proxy | 业务容器运行节点
+
+**主机初始化目录**
+
+```
+$ ansible -i hosts all -m shell -a "mkdir /data/etcd/{bin,cfg,ssl} /data/kubernetes/{bin,cfg,ssl} /data/docker /opt/{app,logs,data,servers}  -p"
+```
+
+#### tls/ssl证书构建
+
+`注意:证书在任意节点生成即可. 这里使用bootstrap的证书轮转，因此不需要给每个节点角色都创建证书`
+
+```
+# 下载证书相关文件(工具包,可以在ansible主机上统一生成)
+$ wget https://pkg.cfssl.org/R1.2/cfssl_linux-amd64
+$ wget https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64
+$ wget https://pkg.cfssl.org/R1.2/cfssl-certinfo_linux-amd64
+$ chmod a+x *amd64
+
+$ mv cfssl_linux-amd64 /usr/sbin/cfssl
+$ mv cfssljson_linux-amd64 /usr/sbin/cfssljson
+$ mv cfssl-certinfo_linux-amd64 /usr/sbin/cfssl-certinfo
+
+
+```
+
+**0. 创建根证书(CA)**
+
+`注意:k8s集群和etcd集群公用一个ca进行证书颁发,后续创建的所有证书都由根证书签名`
+
+```
+# 创建ca证书配置文件
+$ cat ca-ssl/ca-config.json
+{
+  "signing": {
+    "default": {
+      "expiry": "876000h"
+    },
+    "profiles": {
+      "kubernetes": {
+        "usages": [
+            "signing",
+            "key encipherment",
+            "server auth",
+            "client auth"
+        ],
+        "expiry": "876000h"
+      }
+    }
+  }
+}
+## signing 表示该证书可用于签名其它证书，生成的ca.pem证书找中CA=TRUE
+## server auth 表示client可以用该证书对server提供的证书进行验证
+## client auth 表示server可以用该证书对client提供的证书进行验证
+
+
+# 创建证书签名请求文件
+$ cat ca-ssl/ca-csr.json
+{
+  "CN": "kubernetes",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "BeiJing",
+      "L": "BeiJing",
+      "O": "k8s",
+      "OU": "System"
+    }
+  ],
+  "ca": {
+    "expiry": "876000h"
+ }
+}
+
+## CN CommonName,kube-apiserver从证书中提取该字段作为请求的用户名(User Name)，浏览器使用该字段验证网站是否合法
+## O Organization,kube-apiserver 从证书中提取该字段作为请求用户和所属组(Group)
+## kube-apiserver将提取的User、Group作为RBAC授权的用户和标识
+   
+
+# 生成证书和私钥
+$ cd ca-ssl
+$ cfssl gencert -initca ca-csr.json | cfssljson -bare ca
+....
+....
+$ ls 
+ca-config.json  ca.csr  ca-csr.json  ca-key.pem  ca.pem
+
+## 生成ca证书和秘钥(ca-key.pem,ca.pem)
+## ca证书和秘钥以及ca的配置文件在每个节点都需要进行验证
+ 
+```
+
+
+
+
+**1. 创建etcd证书**
+
+```
+# 创建etcd证书和私钥
+$ cat etcd-ssl/etcd-csr.json
+{
+  "CN": "etcd",
+  "hosts": [
+    "127.0.0.1",
+    "172.16.21.23",
+    "172.16.21.24",
+    "172.16.21.25"
+  ],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "BeiJing",
+      "L": "BeiJing",
+      "O": "k8s",
+      "OU": "System"
+    }
+  ]
+}
+
+# 使用前面创建的ca证书私钥和ca配置文件创建etcd证书和私钥
+$ cd etcd-ssl
+$ cfssl gencert -ca=../ca-ssl/ca.pem -ca-key=../ca-ssl/ca-key.pem -config=../ca-ssl/ca-config.json -profile=kubernetes etcd-csr.json | cfssljson -bare etcd
+....
+....
+
+$ ls 
+etcd.csr  etcd-csr.json  etcd-key.pem  etcd.pem
+
+## 创建证书时需要指定CA证书中的profile(用来指定CA)
+ 
+```
+
+**2. 创建k8s-master请求证书**
+
+`注意:为了保证k8s-master的真正高可用，需要给master-api进行高可用配置`
+
+
+```
+$ mkdir k8s-ssl
+$ cat k8s-ssl/k8s-csr.json
+{
+    "CN": "kubernetes",
+    "hosts": [
+      "172.16.21.23",
+      "172.16.21.24",
+      "172.16.21.25",
+      "172.16.21.29",
+      "prod-k8s-master.bgbiao.cn",
+      "kubernetes",
+      "kubernetes.default",
+      "kubernetes.default.svc",
+      "kubernetes.default.svc.cluster",
+      "kubernetes.default.svc.cluster.local"
+    ],
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+        {
+            "C": "CN",
+            "L": "Beijing",
+            "ST": "Beijing",
+            "O": "k8s",
+            "OU": "System"
+        }
+    ]
+}
+
+## hosts中配置了master的节点ip,以及一个负载ip和最终需要使用的master域名
+
+# 生成master的证书和秘钥
+$ cd k8s-ssl
+$ cfssl gencert -ca=../ca-ssl/ca.pem -ca-key=../ca-ssl/ca-key.pem -config=../ca-ssl/ca-config.json -profile=kubernetes k8s-csr.json | cfssljson -bare k8s
+....
+....
+$ ls 
+k8s.csr  k8s-csr.json  k8s-key.pem  k8s.pem
+
+ 
+
+```
+
+
+**3. 创建k8s-admin请求证书**
+
+`注意:k8s-admin证书为管理员证书，主要配合k8s的rolebinding来生成Kubeconfig`
+
+```
+```
+
+**4. 创建kube-proxy证书**
+
+```
+# 配置并生成kube-proxy证书
+$ cd k8s-ssl
+$ cat kube-proxy-csr.json
+{
+  "CN": "system:kube-proxy",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "L": "Beijing",
+      "ST": "Beijing",
+      "O": "k8s",
+      "OU": "System"
+    }
+  ]
+}
+
+
+$ cfssl gencert -ca=../ca-ssl/ca.pem -ca-key=../ca-ssl/ca-key.pem -config=../ca-ssl/ca-config.json -profile=kubernetes kube-proxy-csr.json  | cfssljson -bare kube-proxy
+
+$ ls kube-proxy*
+kube-proxy.csr  kube-proxy-csr.json  kube-proxy-key.pem  kube-proxy.pem
+```
+
+#### etcd集群安装
+
+```
+# 使用ansible-playbooks进行etcd集群安装，配置变更
+## etcd集群的每个节点都有一个节点id,因此需要使用该种方式同步三次配置文件
+$  ansible-playbook -i hosts -e host=master[0] -e nodename=etcd01 etcd-install.yml
+$  ansible-playbook -i hosts -e host=master[1] -e nodename=etcd02 etcd-install.yml
+$  ansible-playbook -i hosts -e host=master[2] -e nodename=etcd03 etcd-install.yml
+
+# 查看etcd配置(使用ansible-playbooks模板化后的配置如下.确保证书和相关目录都存在)
+$ cat /data/etcd/cfg/etcd.conf
+#[Member]
+ETCD_NAME="etcd01"
+ETCD_DATA_DIR="/data/etcd/data/"
+ETCD_LISTEN_PEER_URLS="https://172.16.21.23:2380"
+ETCD_LISTEN_CLIENT_URLS="https://172.16.21.23:2379"
+#[Clustering]
+ETCD_INITIAL_ADVERTISE_PEER_URLS="https://172.16.21.23:2380"
+ETCD_ADVERTISE_CLIENT_URLS="https://172.16.21.23:2379"
+ETCD_INITIAL_CLUSTER="etcd01=https://172.16.21.23:2380,etcd02=https://172.16.21.24:2380,etcd03=https://172.16.21.25:2380"
+ETCD_INITIAL_CLUSTER_TOKEN="etcd_cluster_new"
+ETCD_INITIAL_CLUSTER_STATE="new"
+
+#[Security]
+ETCD_CERT_FILE="/data/etcd/ssl/etcd.pem"
+ETCD_KEY_FILE="/data/etcd/ssl/etcd-key.pem"
+ETCD_TRUSTED_CA_FILE="/data/etcd/ssl/ca.pem"
+ETCD_CLIENT_CERT_AUTH="true"
+ETCD_PEER_CERT_FILE="/data/etcd/ssl/etcd.pem"
+ETCD_PEER_KEY_FILE="/data/etcd/ssl/etcd-key.pem"
+ETCD_PEER_TRUSTED_CA_FILE="/data/etcd/ssl/ca.pem"
+ETCD_PEER_CLIENT_CERT_AUTH="true" 
+
+# 启动etcd集群
+ansible -i hosts master -m shell -a 'systemctl daemon-reload && systemctl start etcd && systemctl enable etcd' -f 3
+
+# 验证集群是否正常
+$ ansible -i hosts master -m shell -a 'etcdctl --ca-file=/data/etcd/ssl/ca.pem --cert-file=/data/etcd/ssl/etcd.pem --key-file=/data/etcd/ssl/etcd-key.pem --endpoints="https://172.16.21.23:2379,https://172.16.21.24:2379,https://172.16.21.25:2379" cluster-health' -f 3
+172.16.21.25 | SUCCESS | rc=0 >>
+member 233908248dc9c618 is healthy: got healthy result from https://172.16.21.24:2379
+member 3d6e6bf95764ee8f is healthy: got healthy result from https://172.16.21.25:2379
+member f26bd4aedba00d36 is healthy: got healthy result from https://172.16.21.23:2379
+cluster is healthy
+
+172.16.21.24 | SUCCESS | rc=0 >>
+member 233908248dc9c618 is healthy: got healthy result from https://172.16.21.24:2379
+member 3d6e6bf95764ee8f is healthy: got healthy result from https://172.16.21.25:2379
+member f26bd4aedba00d36 is healthy: got healthy result from https://172.16.21.23:2379
+cluster is healthy
+
+172.16.21.23 | SUCCESS | rc=0 >>
+member 233908248dc9c618 is healthy: got healthy result from https://172.16.21.24:2379
+member 3d6e6bf95764ee8f is healthy: got healthy result from https://172.16.21.25:2379
+member f26bd4aedba00d36 is healthy: got healthy result from https://172.16.21.23:2379
+cluster is healthy
+
+```
+
+#### flanneld组件部署
+
+`注意:docker依赖flanneld,flanneld依赖etcd`
+
+```
+# 在etcd集群中提前创建pod网络(默认前缀为/coreos.com)
+$ export FLANNEL_ETCD_PREFIX="/kubernetes/network"
+
+$ etcdctl --ca-file=/data/etcd/ssl/ca.pem --cert-file=/data/etcd/ssl/etcd.pem --key-file=/data/etcd/ssl/etcd-key.pem --endpoints="https://172.16.21.23:2379,https://172.16.21.24:2379,https://172.16.21.25:2379" set ${FLANNEL_ETCD_PREFIX}/config '{"Network":"20.0.0.0/16", "SubnetLen": 24, "Backend": {"Type": "vxlan"}}'
+
+$ etcdctl --ca-file=/data/etcd/ssl/ca.pem --cert-file=/data/etcd/ssl/etcd.pem --key-file=/data/etcd/ssl/etcd-key.pem --endpoints="https://172.16.21.23:2379,https://172.16.21.24:2379,https://172.16.21.25:2379" get ${FLANNEL_ETCD_PREFIX}/config
+{"Network":"20.0.0.0/16", "SubnetLen": 24, "Backend": {"Type": "vxlan"}}
+ 
+
+# 使用ansible部署flanneld网络
+## 注意:由于每个节点都需要部署docker服务，因此每个节点都安装flanneld
+## flanneld启动配置增加flanneld_etcd_prefix=${FLANNEL_ETCD_PREFIX}
+$ ansible-playbook -i hosts -e host=all flanneld-install.yml
+
+# 批量启动flanneld
+$ ansible -i hosts all -m shell -a " systemctl daemon-reload && systemctl enable flanneld && systemctl restart flanneld"
+
+# 检查flanneld是否正常启动(每个节点上会创建一个flannel.1的虚拟网卡,从etcd中的子网获取一个24位的网段)
+$ ansible -i hosts all -m shell -a " ifconfig flannel.1"
+
+
+```
+
+#### docker部署
+
+```
+# 批量部署docker基础环境
+$ ansible-playbook -i hosts -e host=all docker-install.yml
+
+# 启动docker
+$ ansible -i hosts all -m shell -a " systemctl daemon-reload && systemctl enable docker && systemctl restart docker "
+...
+
+# 查看docker启动状态
+# 查看flannel.1和docker0的ip地址即可判断docker是否使用了flannel网络(一个子网地址,一个是子网的第一个ip地址(充当网关))
+$ ansible -i hosts all -m shell -a " ifconfig flannel.1 | grep inet && ifconfig docker0 | grep inet"
+....
+....
+
+```
+
+#### k8s-master部署
+
+- kube-apiserver
+- kube-scheduler
+- kube-controller-manager 
+
+`注意:k8s-master的证书我们前面已经生成了,在k8s-ssl目录`
+
+`注意:k8s里的状态数据使用etcd v3接口存储`
+
+```
+# 生成Bootstrapping配置文件(用来对kubelet第一次授权)
+$ echo `head -c 16 /dev/urandom | od -An -t x | tr -d ' '`,kubelet-bootstrap,10001,\"system:kubelet-bootstrap\"  >> templates/token.csv
+$ cat templates/token.csv
+a193d1d3db2080f06b265187c9b9e391,kubelet-bootstrap,10001,"system:kubelet-bootstrap"
+
+
+# 使用ansible-playbooks统一部署k8s-master基础环境
+$ ansible-playbook -i hosts -e host=master k8s-master-install.yml
+...
+...
+
+# 统一启动k8s-master节点各个角色
+$ ansible -i hosts master -m shell -a "systemctl daemon-reload && systemctl restart kube-apiserver && systemctl enable kube-apiserver"
+$ ansible -i hosts master -m shell -a "systemctl daemon-reload && systemctl restart kube-controller-manager && systemctl enable kube-controller-manager"
+$ ansible -i hosts master -m shell -a "systemctl daemon-reload && systemctl restart kube-scheduler && systemctl enable kube-scheduler"
+
+# 确认master节点是否启动成功
+$ ansible -i hosts master -m shell -a "kubectl get cs,nodes"
+172.16.21.25 | SUCCESS | rc=0 >>
+NAME                                 STATUS    MESSAGE             ERROR
+componentstatus/scheduler            Healthy   ok
+componentstatus/controller-manager   Healthy   ok
+componentstatus/etcd-1               Healthy   {"health":"true"}
+componentstatus/etcd-0               Healthy   {"health":"true"}
+componentstatus/etcd-2               Healthy   {"health":"true"}
+
+172.16.21.24 | SUCCESS | rc=0 >>
+NAME                                 STATUS    MESSAGE             ERROR
+componentstatus/scheduler            Healthy   ok
+componentstatus/controller-manager   Healthy   ok
+componentstatus/etcd-1               Healthy   {"health":"true"}
+componentstatus/etcd-0               Healthy   {"health":"true"}
+componentstatus/etcd-2               Healthy   {"health":"true"}
+
+172.16.21.23 | SUCCESS | rc=0 >>
+NAME                                 STATUS    MESSAGE             ERROR
+componentstatus/scheduler            Healthy   ok
+componentstatus/controller-manager   Healthy   ok
+componentstatus/etcd-2               Healthy   {"health":"true"}
+componentstatus/etcd-1               Healthy   {"health":"true"}
+componentstatus/etcd-0               Healthy   {"health":"true"}
+  
+
+```
+
+#### 部署k8s-node节点
+
+- docker
+- flanneld
+- kubelet
+- kube-proxy
+
+`注意:通常由于master节点也需要监控，因此上述组件默认在全部节点都会安装，只需要在相应的node节点配置Kubelet和kube-proxy即可`
+
+
+`注意:部署node节点前，需要在装有Kubectl客户端的机器上创建Kube-bootstrap文件`
+
+
+**在任意一台有ssl相关证书的节点上生成bootstrap.kubeconfig**
+
+`注意:由于master节点上均有ssl证书和客户端配置，可以选择在任意节点上进行生成`
+
+```
+# 设置环境变量
+$ BOOTSTRAP_TOKEN=`cat /data/kubernetes/cfg/token.csv  | awk -F ',' '{print $1}'`
+$ KUBE_APISERVER="https://172.16.21.25:6443"  
+
+$ export KUBE_APISERVER="https://172.16.21.25:6443"
+$ export BOOTSTRAP_TOKEN=`cat /data/kubernetes/cfg/token.csv  | awk -F ',' '{print $1}'`
+$ echo ${BOOTSTRAP_TOKEN}
+$ kubectl config set-cluster kubernetes --certificate-authority=/data/kubernetes/ssl/ca.pem --embed-certs=true --server=${KUBE_APISERVER} --kubeconfig=bootstrap.kubeconfig
+$ kubectl config set-credentials kubelet-bootstrap --token=${BOOTSTRAP_TOKEN} --kubeconfig=bootstrap.kubeconfig
+$ kubectl config set-context default --cluster=kubernetes  --user=kubelet-bootstrap --kubeconfig=bootstrap.kubeconfig
+$ kubectl config use-context default --kubeconfig=bootstrap.kubeconfig
+$ kubectl config set-cluster kubernetes --certificate-authority=/data/kubernetes/ssl/ca.pem --embed-certs=true --server=${KUBE_APISERVER} --kubeconfig=kube-proxy.kubeconfig
+$ kubectl config set-credentials kube-proxy --client-certificate=/data/kubernetes/ssl/kube-proxy.pem --client-key=/data/kubernetes/ssl/kube-proxy-key.pem --embed-certs=true --kubeconfig=kube-proxy.kubeconfig
+$ ls /data/kubernetes/ssl/kube-proxy.pem
+$ ls /data/kubernetes/ssl/
+$ kubectl config set-credentials kube-proxy --client-certificate=/data/kubernetes/ssl/kube-proxy.pem --client-key=/data/kubernetes/ssl/kube-proxy-key.pem --embed-certs=true --kubeconfig=kube-proxy.kubeconfig
+$ kubectl config set-context default --cluster=kubernetes --cluster=kubernetes --user=kube-proxy --kubeconfig=kube-proxy.kubeconfig
+$ kubectl config use-context default --kubeconfig=kube-proxy.kubeconfig
+
+# 生成kubelet.config和Kube-proxy.config文件
+$ ls bootstrap.kubeconfig  kube-proxy.kubeconfig
+
+# 给kubelet-bootstrap用户绑定集群角色
+$ kubectl create clusterrolebinding kubelet-bootstrap --clusterrole=system:node-bootstrapper --user=kubelet-bootstrap
+
+# 将上述两个文件保存下来，每个node节点需要使用它启动集群角色
+$ ansible -i hosts 172.16.21.25 -m fetch -a "src=bootstrap.kubeconfig dest=./templates/ flat=yes"
+$ ansible -i hosts 172.16.21.25 -m fetch -a "src=kube-proxy.kubeconfig dest=./templates/ flat=yes" 
+```
+
+
+**创建kubelet相关配置文件**
+
+```
+# kubelet模板文件
+$ templates/kubelet.config.j2
+kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+address: {{ hostip }}
+port: 10250
+readOnlyPort: 10255
+cgroupDriver: systemd
+clusterDNS: ["10.0.0.2"]
+clusterDomain: cluster.local.
+failSwapOn: false
+authentication:
+  anonymous:
+    enabled: true
+ 
+
+# kubelet配置文件
+$ cat templates/kubelet.j2
+KUBELET_OPTS="--logtostderr=true \
+--v=4 \
+--hostname-override={{ hostip }} \
+--kubeconfig={{ cfg_dir }}kubelet.kubeconfig \
+--bootstrap-kubeconfig={{ cfg_dir }}bootstrap.kubeconfig \
+--config={{ cfg_dir }}kubelet.config \
+--cert-dir={{ ssl_dir }} \
+--pod-infra-container-image=registry.cn-hangzhou.aliyuncs.com/google-containers/pause-amd64:3.0 \
+--cgroup-driver systemd "
+
+$ cat templates/kubelet.service.j2
+[Unit]
+Description=Kubernetes Kubelet
+After=docker.service
+Requires=docker.service
+[Service]
+EnvironmentFile={{ kubelet_conf }}
+ExecStart=/usr/bin/kubelet $KUBELET_OPTS
+Restart=on-failure
+KillMode=process
+[Install]
+WantedBy=multi-user.target
+
+```
+
+**创建kubeproxy相关文件**
+
+```
+$ cat templates/kube-proxy.j2
+# 指定集群pod地址
+KUBE_PROXY_OPTS="--logtostderr=true \
+--v=4 \
+--hostname-override={{ hostip }} \
+--cluster-cidr=20.0.0.0/16 \
+--kubeconfig={{ cfg_dir }}kube-proxy.kubeconfig --proxy-mode=ipvs"
+
+$ cat templates/kube-proxy.service.j2
+[Unit]
+Description=Kubernetes Proxy
+After=network.target
+[Service]
+EnvironmentFile=-{{ cfg_dir }}kube-proxy
+ExecStart=/usr/bin/kube-proxy $KUBE_PROXY_OPTS
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+```
+
+**k8s-node节点部署和初始化**
+
+```
+# node节点初始化
+$ ansible-playbook -i hosts -e host=node[0] k8s-slave-install.yml
+...
+...
+# 启动node节点进程
+$ ansible -i hosts node[0] -m shell -a "systemctl daemon-reload && systemctl restart kubelet kube-proxy && systemctl enable kubelet kube-proxy && systemctl status kubelet kube-proxy"
+....
+....
+
+
+# 验证node节点(待node节点的kubelet进程成功启动后去master节点进行验证)
+
+# 配置approve kubelet CSR 请求
+# 当Kubelet新节点加入后会生成一个csr请求(pending状态)
+$ kubectl  get csr
+NAME                                                   AGE   REQUESTOR           CONDITION
+node-csr-6prko8VvNEeWklAICciQ1PYD4kPzWjIsFcyNI_-mugo   9s    kubelet-bootstrap   Pending
+
+
+# 手动统一csr请求
+$ kubectl certificate approve node-csr-6prko8VvNEeWklAICciQ1PYD4kPzWjIsFcyNI_-mugo
+certificatesigningrequest.certificates.k8s.io/node-csr-6prko8VvNEeWklAICciQ1PYD4kPzWjIsFcyNI_-mugo approved
+
+
+$ kubectl  get csr
+NAME                                                   AGE   REQUESTOR           CONDITION
+node-csr-6prko8VvNEeWklAICciQ1PYD4kPzWjIsFcyNI_-mugo   83s   kubelet-bootstrap   Approved,Issued
+
+Requesting User：请求 CSR 的用户，kube-apiserver 对它进行认证和授权；
+Subject：请求签名的证书信息；
+证书的 CN 是 system:node:kube-node2， Organization 是 system:nodes，kube-apiserver 的 Node 授权模式会授予该证书的相关权
+限
+
+# 在全部master节点上查看配置信息
+$ ansible -i hosts master -m shell -a "kubectl get nodes"
+172.16.21.25 | SUCCESS | rc=0 >>
+NAME           STATUS   ROLES    AGE   VERSION
+172.16.21.26   Ready    <none>   15m   v1.15.0
+
+172.16.21.23 | SUCCESS | rc=0 >>
+NAME           STATUS   ROLES    AGE   VERSION
+172.16.21.26   Ready    <none>   15m   v1.15.0
+
+172.16.21.24 | SUCCESS | rc=0 >>
+NAME           STATUS   ROLES    AGE   VERSION
+172.16.21.26   Ready    <none>   15m   v1.15.0
+
+
+```
+
+**配置证书自动轮转请求**
+
+`注意:由于集群使用Bootstrap方式对kubelet客户端进行csr证书准许，这样每次在新增node节点后都需要人为去手动请求。k8s内置了自动请求和证书轮转。`
+
+`注意:需要在master节点配置，由master节点角色进行管控`
+
+```
+# 配置证书轮转
+$ cat auto-approve-node-csr.yml
+# A ClusterRole which instructs the CSR approver to approve a user requesting
+# node client credentials.
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: approve-node-client-csr
+rules:
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["certificatesigningrequests/nodeclient"]
+  verbs: ["create"]
+---
+# A ClusterRole which instructs the CSR approver to approve a node renewing its
+# own client credentials.
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: approve-node-client-renewal-csr
+rules:
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["certificatesigningrequests/selfnodeclient"]
+  verbs: ["create"]
+---
+# A ClusterRole which instructs the CSR approver to approve a node requesting a
+# serving cert matching its client cert.
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: approve-node-server-renewal-csr
+rules:
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["certificatesigningrequests/selfnodeserver"]
+  verbs: ["create"]
+
+$ kubectl apply -f auto-approve-node-csr.yml
+
+# 绑定相关规则
+$ kubectl create clusterrolebinding node-client-auto-approve-csr --clusterrole=approve-node-client-csr --group=system:kubelet-bootstrap
+$ kubectl create clusterrolebinding node-server-auto-renew-crt --clusterrole=approve-node-server-renewal-csr --group=system:nodes
+$ kubectl create clusterrolebinding node-client-auto-renew-crt --clusterrole=approve-node-client-renewal-csr --group=system:nodes
+```
+
+
+**新增节点**
+
+`注意:实际上一个新节点需要进行如下相关操作`
+
+- `系统初始化`
+- `安装flanneld`
+- `安装docker`
+- `安装k8s-slave组件`
+
+`注意: 我们在生成k8s-csr.json的时候指定了master-api的slb和域名，将master三个节点的6443负载到slb并且解析到该域名上，后期所有的Kubelet和Kube-proxy直接配置master-api的域名即可，这样可保证真正的高可用`
+
+```
+# 执行新增节点
+
+$ ansible-playbook -i hosts -e host=node[1] k8s-slave-install.yml
+...
+...
+# 重启node节点相关进程
+$ ansible -i hosts node[1] -m shell -a "systemctl daemon-reload && systemctl restart kubelet kube-proxy && systemctl enable kubelet kube-proxy && systemctl status kubelet kube-proxy"
+
+# 等待kubelet启动成功后直接就可以查看到节点信息了
+$ ansible -i hosts master -m shell -a "kubectl get nodes"
+172.16.21.25 | SUCCESS | rc=0 >>
+NAME           STATUS   ROLES    AGE    VERSION
+172.16.21.26   Ready    <none>   30m    v1.15.0
+172.16.21.27   Ready    <none>   9m1s   v1.15.0
+
+172.16.21.23 | SUCCESS | rc=0 >>
+NAME           STATUS   ROLES    AGE    VERSION
+172.16.21.26   Ready    <none>   30m    v1.15.0
+172.16.21.27   Ready    <none>   9m1s   v1.15.0
+
+172.16.21.24 | SUCCESS | rc=0 >>
+NAME           STATUS   ROLES    AGE    VERSION
+172.16.21.26   Ready    <none>   30m    v1.15.0
+172.16.21.27   Ready    <none>   9m1s   v1.15.0
+
+# 再次新增节点并查看相关节点角色状态
+$ ansible -i hosts master -m shell -a "kubectl get nodes,ep"
+172.16.21.23 | SUCCESS | rc=0 >>
+NAME                STATUS   ROLES    AGE     VERSION
+node/172.16.21.26   Ready    <none>   13h     v1.15.0
+node/172.16.21.27   Ready    <none>   12h     v1.15.0
+node/172.16.21.28   Ready    <none>   6m37s   v1.15.0
+NAME                   ENDPOINTS                                               AGE
+endpoints/kubernetes   172.16.21.23:6443,172.16.21.24:6443,172.16.21.25:6443   35h
+
+172.16.21.25 | SUCCESS | rc=0 >>
+NAME                STATUS   ROLES    AGE     VERSION
+node/172.16.21.26   Ready    <none>   13h     v1.15.0
+node/172.16.21.27   Ready    <none>   12h     v1.15.0
+node/172.16.21.28   Ready    <none>   6m37s   v1.15.0
+NAME                   ENDPOINTS                                               AGE
+endpoints/kubernetes   172.16.21.23:6443,172.16.21.24:6443,172.16.21.25:6443   35h
+
+172.16.21.24 | SUCCESS | rc=0 >>
+NAME                STATUS   ROLES    AGE     VERSION
+node/172.16.21.26   Ready    <none>   13h     v1.15.0
+node/172.16.21.27   Ready    <none>   12h     v1.15.0
+node/172.16.21.28   Ready    <none>   6m37s   v1.15.0
+NAME                   ENDPOINTS                                               AGE
+endpoints/kubernetes   172.16.21.23:6443,172.16.21.24:6443,172.16.21.25:6443   35h
+ 
+
+```
+
+**将master节点加入到集群**
+
+`注意:因为master节点可能后期也需要跑一些daemonset相关的任务，因此也需要加入到集群中`
+
+```
+# 在master节点同步kubelet和kube-proxy相关配置
+$ ansible-playbook -i hosts -e host=master[0:2] k8s-slave-install.yml --tags config
+...
+...
+
+# 重启kubelet和kube-proxy角色
+$ ansible -i hosts master -m shell -a "systemctl daemon-reload && systemctl restart kubelet kube-proxy && systemctl enable kubelet kube-proxy"
+...
+...
+
+
+# 查看集群整体状态
+$ ansible -i hosts master -m shell -a "kubectl get nodes"
+172.16.21.23 | SUCCESS | rc=0 >>
+NAME           STATUS   ROLES    AGE     VERSION
+172.16.21.23   Ready    <none>   3m30s   v1.15.0
+172.16.21.24   Ready    <none>   3m29s   v1.15.0
+172.16.21.25   Ready    <none>   3m29s   v1.15.0
+172.16.21.26   Ready    <none>   13h     v1.15.0
+172.16.21.27   Ready    <none>   13h     v1.15.0
+172.16.21.28   Ready    <none>   35m     v1.15.0
+
+172.16.21.25 | SUCCESS | rc=0 >>
+NAME           STATUS   ROLES    AGE     VERSION
+172.16.21.23   Ready    <none>   3m30s   v1.15.0
+172.16.21.24   Ready    <none>   3m29s   v1.15.0
+172.16.21.25   Ready    <none>   3m29s   v1.15.0
+172.16.21.26   Ready    <none>   13h     v1.15.0
+172.16.21.27   Ready    <none>   13h     v1.15.0
+172.16.21.28   Ready    <none>   35m     v1.15.0
+
+172.16.21.24 | SUCCESS | rc=0 >>
+NAME           STATUS   ROLES    AGE     VERSION
+172.16.21.23   Ready    <none>   3m30s   v1.15.0
+172.16.21.24   Ready    <none>   3m29s   v1.15.0
+172.16.21.25   Ready    <none>   3m29s   v1.15.0
+172.16.21.26   Ready    <none>   13h     v1.15.0
+172.16.21.27   Ready    <none>   13h     v1.15.0
+172.16.21.28   Ready    <none>   35m     v1.15.0
+
+
+```
+
+**设置集群标签和污点**
+
+`注意:通常我们不希望在master节点上运行一个业务容器，但是一些基础的agent容器是必须的，因此需要使用taint将master节点设置为不可调度，同时在创建pod的时候设置tolerations来容忍该pod可以调度指定的污点节点上`
+
+```
+# 设置节点标签，用来直观查看集群节点的角色(master or node)
+$ kubectl label node 172.16.21.23 node-role.kubernetes.io/master=""
+$ kubectl label node 172.16.21.24 node-role.kubernetes.io/master=""
+$ kubectl label node 172.16.21.25 node-role.kubernetes.io/master=""
+
+$ kubectl  get nodes
+NAME           STATUS   ROLES    AGE     VERSION
+172.16.21.23   Ready    master   5m43s   v1.15.0
+172.16.21.24   Ready    master   5m42s   v1.15.0
+172.16.21.25   Ready    master   5m42s   v1.15.0
+172.16.21.26   Ready    <none>   13h     v1.15.0
+172.16.21.27   Ready    <none>   13h     v1.15.0
+172.16.21.28   Ready    <none>   37m     v1.15.0
+
+# 设置污点，不允许k8s调度pod到master节点
+$ kubectl taint nodes 172.16.21.23 node-role.kubernetes.io/master=:NoSchedule
+$ kubectl taint nodes 172.16.21.24 node-role.kubernetes.io/master=:NoSchedule
+$ kubectl taint nodes 172.16.21.25 node-role.kubernetes.io/master=:NoSchedule
+
+# 查看节点详情
+$ kubectl  describe node 172.16.21.23 | grep -E '(Roles|Taints)'
+Roles:              master
+Taints:             node-role.kubernetes.io/master:NoSchedule
+
+## 此时正常的业务容器不会调度到master节点上
+
+# 给pod配置容忍
+$ cat pod.yml
+...
+tolerations:
+- key: "node-role.kubernetes.io/master"
+  operator: "Equal"
+  value: ""
+  effect: "NoSchedule"
+或者
+tolerations:
+- key: "node-role.kubernetes.io/master"
+  operator: "Exists"
+  effect: "NoSchedule"
+
+```
+
+`注意:理解Taints,Tolerations和Affinity`
+
+- Taints 和 Node affinity 是对立的概念，用来允许一个 node 拒绝某一类 pods
+- Taints 和 tolerations 配合起来可以保证 pods 不会被调度到不合适的 nodes 上干活
+- 一个 node 上可以有多个 taints
+- 将tolerations 应用到 pods 来允许被调度到合适的 nodes 上干活
+
+
+#### 相关问题待处理
+
+addon:
+- [X] [coredns](./manifest/coredns/)
+- [X] [traefik](./manifest/traefik/)
+- [X] [dashboard](./manifest/dashboard/)
+- [X] [prometheus](./manifest/prometheus/)
+- [X] [elk](./manifest/elk/)
+- [X] [spinnaker](./manifest/spinnaker)
+
+- 1. 当前docker环境无法使用systemd的cgroup-driver
+
+```
+# 异常信息
+docker run -itd 4377975857eb
+6ed616278886e1d05703b92fb720d6ab8e950c2669138fc382d76243d2c2069d
+docker: Error response from daemon: OCI runtime create failed: systemd cgroup flag passed, but systemd support for managing cgroups is not available: unknown.
+
+# 将docker，kubelet相关cgroup-driver参数切换为cgroupfs
+```
+
+- 2. master节点上的环境无法`kubectl exec -it`到pod内部
+
+```
+# 异常信息
+$  kubectl get pods
+NAME      READY   STATUS    RESTARTS   AGE
+busybox   1/1     Running   0          28s
+
+$ kubectl  exec -it busybox bash
+error: unable to upgrade connection: Forbidden (user=system:anonymous, verb=create, resource=nodes, subresource=proxy)
+
+# 给匿名用户授权
+$ kubectl create clusterrolebinding system:anonymous   --clusterrole=cluster-admin   --user=system:anonymous
+clusterrolebinding.rbac.authorization.k8s.io/system:anonymous created
+
+# exec到pod容器内部(nameserver为kubelet的模板参数中定义)
+$ kubectl exec busybox cat /etc/resolv.conf
+nameserver 10.0.0.2
+search default.svc.cluster.local. svc.cluster.local. cluster.local.
+options ndots:5
+
+# 当前coredns的集群信息和kubelet的模板配置
+$ cat /data/kubernetes/cfg/kubelet.config
+kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+address: 172.16.21.23
+port: 10250
+readOnlyPort: 10255
+cgroupDriver: cgroupfs
+clusterDNS: ["10.0.0.2"]
+clusterDomain: cluster.local.
+failSwapOn: false
+authentication:
+  anonymous:
+    enabled: true
+
+$ kubectl  get svc -n kube-system
+NAME       TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)                  AGE
+kube-dns   ClusterIP   10.253.0.250   <none>        53/UDP,53/TCP,9153/TCP   19m
+
+# 需要将kubelet.config中的clusterDNS修改为真正的dns的svc的ip
+
+# 测试dns的使用发现如下问题(k8s-csr.json证书问题)
+# 查看dns的pod日志发现如下问题(应该是创建master证书的时候没有把10.253.0.1加上)
+E0906 06:40:22.712612       1 reflector.go:125] pkg/mod/k8s.io/client-go@v0.0.0-20190620085101-78d2af792bab/tools/cache/reflector.go:98: Failed to list *v1.Endpoints: Get https://10.253.0.1:443/api/v1/endpoints?limit=500&resourceVersion=0: x509: certificate is valid for 172.16.21.23, 172.16.21.24, 172.16.21.25, 172.16.21.26, 172.16.21.27, 172.16.21.29, not 10.253.0.1
+
+# 需要重新创建dns相关证书(在给master生成证书的时候增加127.0.0.1和10.253.0.1[serviceip的第一个])
+
+# 修改k8s-csr.json后重新生成相关证书并同意下发到集群中,并重启整个集群
+
+# 再次进行dns检测(命名空间内可以互相解析svc的名称,且pod可以直接解析外网的域名)
+$ kubectl exec busybox -it sh
+/ # cat /etc/resolv.conf
+nameserver 10.253.0.250
+search default.svc.cluster.local. svc.cluster.local. cluster.local.
+options ndots:5
+/ # nslookup kubernetes
+Server:    10.253.0.250
+Address 1: 10.253.0.250
+
+Name:      kubernetes
+Address 1: 10.253.0.1
+/ # nslookup baidu.com
+Server:    10.253.0.250
+Address 1: 10.253.0.250
+
+Name:      baidu.com
+Address 1: 220.181.38.148
+Address 2: 39.156.69.79
+
+
+```
+
+- 3. k8s-master-api提供给外部应用使用
+
+[集群外服务可用kubeconfig](./files/kubelet.kubeconfig)
+
+
+
+```
+# 拷贝master节点的kubeconfig到本地(有该节点的相关证书)
+$ cp /data/kubernetes/cfg/kubelet.kubeconfig .
+
+# 修改客户端用的kubeconfig(把证书数据搞进去)
+$ kubectl config set-credentials default-auth --client-key=/data/kubernetes/ssl/kubelet-client-current.pem --client-certificate=/data/kubernetes/ssl/kubelet-client-current.pem --kubeconfig=kubelet.kubeconfig --embed-certs=true
+
+# 测试使用(用户没有相关权限)
+$ kubectl  --kubeconfig kubeconfig.prod get sa
+Error from server (Forbidden): serviceaccounts is forbidden: User "system:node:172.16.21.23" cannot list resource "serviceaccounts" in API group "" in the namespace "default": can only create tokens for individual service accounts
+
+# 直接将cluster-admin的clusterrole绑定到客户端用户即可
+## kubectl create clusterrolebinding node-xxx-admin --clusterrole=admin --group=system:node
+kubectl create clusterrolebinding node-master --clusterrole=cluster-admin --user="system:node:172.16.21.23"
+
+# 再次查看
+kubectl  --kubeconfig kubeconfig.prod get pods -n myapp1
+NAME                     READY   STATUS    RESTARTS   AGE
+myapp-6548f6cd69-47c45   1/1     Running   0          3m55s
+myapp-6548f6cd69-6cdbb   1/1     Running   0          3m55s
+myapp-6548f6cd69-cf65z   1/1     Running   0          3m55s
+myapp-6548f6cd69-tsxf5   1/1     Running   0          3m55s
+myapp-6548f6cd69-v4mbt   1/1     Running   0          3m55s
+
+# 接下来该用户就有集群管理员的权限了
+
+# 拷贝kubelet.kubeconfig文件到任何节点中(比如spinnaker)
+$ kubectl  --kubeconfig kubeconfig.prod get ns
+NAME                   STATUS   AGE
+default                Active   7d17h
+kube-node-lease        Active   7d17h
+kube-public            Active   7d17h
+kube-system            Active   7d17h
+kubernetes-dashboard   Active   4d3h
+monitoring             Active   47h
+myapp                  Active   37m
+ns-elastic             Active   2d
+soul-data              Active   2d3h
+spinnaker              Active   7m24s
+```
+
+
+### 新node节点加入集群步骤
+
+```
+# 增加新节点的免密(其实也可以不增加免密)
+## 初始化
+ansible -i hosts node-new -m copy -a "src=./conf/k8s-sysctl.conf dest=/etc/sysctl.d/k8s-sysctl.conf"
+ansible -i hosts node-new -m copy -a "src=./conf/ipvs.conf dest=/etc/modules-load.d/ipvs.conf"
+ansible -i hosts node-new -m shell -a "systemctl enable --now systemd-modules-load.service"
+ansible -i hosts all -m shell -a 'lsmod |egrep " ip_vs_rr|br_netfilter"'
+ansible -i hosts node-new -m shell -a 'lsmod |egrep " ip_vs_rr|br_netfilter"'
+
+## 初始化node节点所需服务
+ansible-playbook -i hosts -e host=node-new flanneld-install.yml
+ansible-playbook -i hosts -e host=node-new docker-install.yml
+ansible-playbook -i hosts -e host=node-new k8s-slave-install.yml
+
+## 重启node节点的服务(并增加开机自启)
+ansible -i hosts node-new -m shell -a "systemctl daemon-reload"
+
+ansible -i hosts node-new -m shell -a "systemctl restart flanneld && systemctl restart docker && systemctl restart kubelet && systemctl restart kube-proxy "
+ansible -i hosts node-new -m shell -a "systemctl enable flanneld && systemctl enable docker && systemctl enable kubelet && systemctl enable kube-proxy "
+
+
+## 查看新增节点(秒级增加节点)
+kubectl  get nodes
+NAME            STATUS   ROLES    AGE     VERSION
+172.16.21.23    Ready    master   6d2h    v1.15.0
+172.16.21.24    Ready    master   6d2h    v1.15.0
+172.16.21.25    Ready    master   6d2h    v1.15.0
+172.16.21.26    Ready    <none>   6d15h   v1.15.0
+172.16.21.27    Ready    <none>   6d15h   v1.15.0
+172.16.21.28    Ready    <none>   6d2h    v1.15.0
+172.16.33.101   Ready    <none>   3m50s   v1.15.0
+172.16.33.128   Ready    <none>   3m51s   v1.15.0
+172.16.33.129   Ready    <none>   3m50s   v1.15.0
+
+```
+
+

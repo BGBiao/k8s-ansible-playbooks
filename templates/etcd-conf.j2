@@ -1,0 +1,22 @@
+#[Member]
+ETCD_NAME="{{ node_name }}"
+ETCD_DATA_DIR="{{ data_dir }}"
+ETCD_LISTEN_PEER_URLS="https://{{ hostip }}:2380"
+ETCD_LISTEN_CLIENT_URLS="https://{{ hostip }}:2379"
+#[Clustering]
+ETCD_INITIAL_ADVERTISE_PEER_URLS="https://{{ hostip }}:2380"
+ETCD_ADVERTISE_CLIENT_URLS="https://{{ hostip }}:2379"
+ETCD_INITIAL_CLUSTER="{{ etcd_url }}"
+ETCD_INITIAL_CLUSTER_TOKEN="{{ cluster_token }}"
+ETCD_INITIAL_CLUSTER_STATE="new"
+
+
+#[Security]
+ETCD_CERT_FILE="{{ ssl_dir }}etcd.pem"
+ETCD_KEY_FILE="{{ ssl_dir }}etcd-key.pem"
+ETCD_TRUSTED_CA_FILE="{{ ssl_dir }}ca.pem"
+ETCD_CLIENT_CERT_AUTH="true"
+ETCD_PEER_CERT_FILE="{{ ssl_dir }}etcd.pem"
+ETCD_PEER_KEY_FILE="{{ ssl_dir }}etcd-key.pem"
+ETCD_PEER_TRUSTED_CA_FILE="{{ ssl_dir }}ca.pem"
+ETCD_PEER_CLIENT_CERT_AUTH="true"

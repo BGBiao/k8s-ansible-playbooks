@@ -1,0 +1,85 @@
+---
+- hosts: "{{ host }}"
+  remote_user: root
+  vars:
+    hostip: "{{ ansible_default_ipv4.address }}"
+    node_name: "{{ ansible_hostname }}"
+    ipv6: "{{ ansible_all_ipv6_addresses[0].split(':')[-1] }}"
+    app_version: k8s-server-amd64-v1.16.0
+    app: kubernetes
+    # 证书和配置
+    cfg_dir: "{{ base_dir }}{{ app }}/cfg/"
+    ssl_dir: "{{ base_dir }}{{ app }}/ssl/"
+    data_dir: "{{ base_dir }}{{ app }}/data/"
+    # 所有的二进制文件都放置在/usr/bin/下面了
+    bin_dir: "{{ base_dir }}{{ app }}/bin/"
+    etcd_ssl_dir: "{{ base_dir }}etcd/ssl/"
+    etcd_endpoints: "https://172.29.202.145:2379,https://172.29.202.155:2379,https://172.29.202.151:2379"
+    kube_api_conf: "{{ cfg_dir }}kube-apiserver"
+    kube_controller_conf: "{{ cfg_dir }}kube-controller-manager"
+    kube_scheduler_conf: "{{ cfg_dir }}kube-scheduler"
+    kubelet_conf: "{{ cfg_dir }}kubelet"
+    kube_proxy_conf: "{{ cfg_dir }}kube-proxy"
+
+  vars_files:
+    - vars/varsfile.yml
+
+  tasks:
+  - name: "test ping"
+    ping:
+
+  - name: "init the dir"
+    file:
+      path: "{{ item.dir }}"
+      state: directory
+      mode: '0775'
+    with_items:
+      - { dir: "{{ base_dir }}" }
+      - { dir: "{{ cfg_dir }}" }
+      - { dir: "{{ ssl_dir }}" }
+      - { dir: "{{ data_dir }}" }
+      - { dir: "{{ bin_dir }}" }
+      - { dir: "{{ package_dir }}" }
+      - { dir: "{{ server_dir }}" }
+      - { dir: "{{ log_dir }}{{ app }}" }
+
+  - name: "download the {{ app }} packages"
+    get_url:
+      url: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+    with_items:
+      - { src: "{{ download_url }}{{ app_version }}.tar.gz", dest: "{{ package_dir }}" }
+
+  - name: "untar the {{ app }}"
+    unarchive:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      # 如果解压本地文件必须设置从本地控制器进行解压
+      remote_src: yes
+    with_items:
+      - { src: "{{ package_dir }}{{ app_version }}.tar.gz", dest: "{{ server_dir }}" }
+
+  - name: "copy the {{ app }} to PATH"
+    shell: "cp -rp {{ server_dir }}kubernetes/server/bin/* /usr/bin/"
+
+  - name: "init the configures"
+    template:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      mode: 0755
+    with_items:
+      - { src: "templates/kubelet.service.j2", dest: "/usr/lib/systemd/system/kubelet.service" }
+      - { src: "templates/kubelet.j2", dest: "{{ kubelet_conf }}" }
+      - { src: "templates/kubelet.config.j2", dest: "{{ cfg_dir }}kubelet.config" }
+      - { src: "templates/bootstrap.kubeconfig", dest: "{{ cfg_dir }}bootstrap.kubeconfig" }
+      - { src: "templates/kube-proxy.service.j2", dest: "/usr/lib/systemd/system/kube-proxy.service" }
+      - { src: "templates/kube-proxy.j2", dest: "{{ kube_proxy_conf }}" }
+      - { src: "templates/kube-proxy.kubeconfig", dest: "{{ cfg_dir }}" }
+      - { src: "templates/token.csv", dest: "{{ cfg_dir }}" }
+      - { src: "k8s-ssl/k8s-key.pem", dest: "{{ ssl_dir }}" }
+      - { src: "k8s-ssl/k8s.pem", dest: "{{ ssl_dir }}" }
+      - { src: "k8s-ssl/kube-proxy-key.pem", dest: "{{ ssl_dir }}" }
+      - { src: "k8s-ssl/kube-proxy.pem", dest: "{{ ssl_dir }}" }
+      - { src: "ca-ssl/ca.pem", dest: "{{ ssl_dir }}" }
+      - { src: "ca-ssl/ca-key.pem", dest: "{{ ssl_dir }}" }
+    tags: config

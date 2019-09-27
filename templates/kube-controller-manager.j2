@@ -1,0 +1,20 @@
+# --controllers=*,bootstrapsigner,tokencleaner
+KUBE_CONTROLLER_MANAGER_OPTS="--logtostderr=true \
+--alsologtostderr=false \
+--log-dir={{ log_dir }}{{ app }} \
+--enable-dynamic-provisioning \
+--profiling=false \
+--v=4 \
+--master=127.0.0.1:8080 \
+--leader-elect=true \
+--bind-address={{ hostip }} \
+--secure-port=10257 \
+--service-cluster-ip-range=10.253.0.0/16 \
+--cluster-cidr=20.0.0.0/16 \
+--cluster-name=kubernetes \
+--cluster-signing-cert-file={{ ssl_dir }}ca.pem \
+--cluster-signing-key-file={{ ssl_dir }}ca-key.pem  \
+--root-ca-file={{ ssl_dir }}ca.pem \
+--service-account-private-key-file={{ ssl_dir }}ca-key.pem \
+--requestheader-extra-headers-prefix=X-Remote-Extra- --requestheader-group-headers=X-Remote-Group --requestheader-username-headers=X-Remote-User --allocate-node-cidrs=true \
+--horizontal-pod-autoscaler-use-rest-clients=true"

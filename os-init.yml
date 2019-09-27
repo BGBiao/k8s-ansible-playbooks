@@ -1,0 +1,65 @@
+---
+- hosts: "{{ host }}"
+  remote_user: root
+  vars:
+    hostip: "{{ ansible_default_ipv4.address }}"
+    node_name: "{{ ansible_hostname }}"
+    ipv6: "{{ ansible_all_ipv6_addresses[0].split(':')[-1] }}"
+    app_version: ""
+    app: os
+    # 证书和配置
+
+  vars_files:
+    - vars/varsfile.yml
+
+  tasks:
+  - name: "test ping"
+    ping:
+
+  - name: "init the dir"
+    shell: "mkdir -p {{ base_dir }} {{ package_dir }} {{ package_dir }} {{ server_dir }} && yum install epel-release -y && yum clean all"
+    args:
+      warn: false
+
+  - name: "install some packages"
+    yum:
+      state: present
+      name:
+        - conntrack
+        - ntpdate
+        - ntp
+        - ipvsadm
+        - ipset
+        - jq
+        - iptables
+        - curl
+        - sysstat
+        - libseccomp
+        - wget
+        - bash-completion
+
+
+
+  # 内核参数配置优化和内核模块加载
+  - name: "init the configures"
+    copy:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      mode: 0755
+    with_items:
+      - { src: "conf/k8s-sysctl.conf", dest: "/etc/sysctl.d/k8s-sysctl.conf" }
+      - { src: "conf/ipvs.conf", dest: "/etc/modules-load.d/ipvs.conf" }
+
+  - name: "init the env"
+    shell: "sed -i '/SELINUX=/ s/enforcing/disabled/g' /etc/selinux/config && getenforce && timedatectl set-timezone Asia/Shanghai && timedatectl set-local-rtc 0 && timedatectl set-ntp yes && systemctl enable --now systemd-modules-load.service"
+    args:
+      warn: false
+
+  - name: "check the kernel model"
+    shell: 'lsmod |egrep " ip_vs_rr|br_netfilter"'
+    register: lsmod_result
+
+  - name: "debug info"
+    debug:
+      msg: "{{ lsmod_result.stdout }}"
+    when: lsmod_result.rc  == 0

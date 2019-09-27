@@ -1,0 +1,72 @@
+---
+- hosts: "{{ host }}"
+  remote_user: root
+  vars:
+    hostip: "{{ ansible_default_ipv4.address }}"
+    node_name: "{{ ansible_hostname }}"
+    ipv6: "{{ ansible_all_ipv6_addresses[0].split(':')[-1] }}"
+    app_version: docker-19.03.1
+    app: docker
+    # 证书和配置
+    cfg_dir: "{{ base_dir }}{{ app }}/cfg/"
+    ssl_dir: "{{ base_dir }}{{ app }}/ssl/"
+    data_dir: "{{ base_dir }}{{ app }}/data/"
+    # 所有的二进制文件都放置在/usr/bin/下面了
+    bin_dir: "{{ base_dir }}{{ app }}/bin/"
+    etcd_ssl_dir: "{{ base_dir }}etcd/ssl/"
+    flanneld_conf: "{{ cfg_dir }}flanneld.conf"
+
+  vars_files:
+    - vars/varsfile.yml
+
+  tasks:
+  - name: "test ping"
+    ping:
+
+  - name: "init the dir"
+    file:
+      path: "{{ item.dir }}"
+      state: directory
+      mode: '0775'
+    with_items:
+      - { dir: "{{ base_dir }}" }
+      - { dir: "{{ cfg_dir }}" }
+      - { dir: "{{ ssl_dir }}" }
+      - { dir: "{{ data_dir }}" }
+      - { dir: "{{ bin_dir }}" }
+      - { dir: "{{ package_dir }}" }
+      - { dir: "{{ server_dir }}" }
+      - { dir: "/root/.{{ app }}" }
+      - { dir: "/etc/{{ app }}" }
+
+
+  - name: "download the {{ app }} packages"
+    get_url:
+      url: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+    with_items:
+      - { src: "{{ download_url }}{{ app_version }}.tgz", dest: "{{ package_dir }}" }
+
+  - name: "untar the {{ app }}"
+    unarchive:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      # 如果解压本地文件必须设置从本地控制器进行解压
+      remote_src: yes
+    with_items:
+      - { src: "{{ package_dir }}{{ app_version }}.tgz", dest: "{{ server_dir }}" }
+
+  - name: "copy the {{ app }} to PATH"
+    shell: "cp -rp {{ server_dir }}docker/* /usr/bin/"
+    tags: docker
+
+  - name: "init the configures"
+    template:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      mode: 0755
+    with_items:
+      - { src: "templates/docker.service.j2", dest: "/usr/lib/systemd/system/docker.service" }
+      - { src: "templates/daemon.json.j2", dest: "/etc/docker/daemon.json" }
+      - { src: "templates/config.json", dest: "/root/.docker/config.json" }
+    tags: config

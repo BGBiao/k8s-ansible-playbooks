@@ -1,0 +1,19 @@
+{
+  "exec-opts": ["native.cgroupdriver=cgroupfs"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m",
+    "max-file": "5"
+
+  },
+  "storage-driver": "overlay2",
+  "storage-opts": [
+    "overlay2.override_kernel_check=true"
+  ],
+  "registry-mirrors": ["http://registry.cn-hangzhou.aliyuncs.com","http://hub-mirror.c.163.com/"],
+  "insecure-registries" : [
+    "docker-registry.soulapp.cn",
+    "172.29.202.170",
+    "harbor.bgbiao.cn"
+  ]
+}

@@ -1,0 +1,48 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: myapp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp
+  namespace: myapp
+spec:
+  ports:
+  - port: 8081
+    protocol: TCP
+    targetPort: 8081
+  selector:
+    name: myapp
+  sessionAffinity: None
+  #type: NodePort #ClusterIP
+  type: ClusterIP
+status:
+  loadBalancer: {}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  namespace: myapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: myapp
+  template:
+    metadata:
+      labels:
+        name: myapp
+    spec:
+      imagePullSecrets:
+        - name: mydocker
+      containers:
+        - image: xxbandy123/myapp:latest
+          name: myapp
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081

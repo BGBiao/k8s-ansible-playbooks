@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: soul-data
+spec:
+  finalizers:
+    - kubernetes
+status:
+  phase: Active
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: eyJhdXRocyI6eyJyZWdpc3RyeS5jbi1oYW5nemhvdS5hbGl5dW5jcy5jb20iOnsidXNlcm5hbWUiOiJkb2NrZXJAc291bGFwcCIsInBhc3N3b3JkIjoiVkZidFA2OWtDUUw2dTNyVVdXVThzQSIsImF1dGgiOiJaRzlqYTJWeVFITnZkV3hoY0hBNlZrWmlkRkEyT1d0RFVVdzJkVE55VlZkWFZUaHpRUT09In19fQ==
+kind: Secret
+metadata:
+  name: mydocker
+  namespace: soul-data
+type: kubernetes.io/dockerconfigjson
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soul-data-progress
+  namespace: soul-data
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  replicas: 2
+  selector:
+    matchLabels:
+      name: soul-data-progress
+  template:
+    metadata:
+      labels:
+        name: soul-data-progress
+    spec:
+      containers:
+        - env:
+            - name: 'aliyun_logs_soul-data-progress'
+              value: stdout
+            - name: 'aliyun_logs_soul-data-progress'
+              value: '/opt/app/logs/*.log'
+          image: registry.cn-hangzhou.aliyuncs.com/bj-ops/soul-data-progress:1567991050
+          imagePullPolicy: Always
+          name: soul-data-progress
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 200m
+              memory: 1024Mi
+            requests:
+              cpu: 200m
+              memory: 1024Mi
+          volumeMounts:
+            - mountPath: /opt/app/logs
+              name: soul-data-progress
+      imagePullSecrets:
+        - name: mydocker
+      volumes:
+        - emptyDir: {}
+          name: soul-data-progress

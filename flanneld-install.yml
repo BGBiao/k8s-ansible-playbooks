@@ -1,0 +1,73 @@
+---
+- hosts: "{{ host }}"
+  remote_user: root
+  vars:
+    #hostip: "{{ ansible_all_ipv4_addresses[0] }}"
+    #hostip: "{{ inventory_hostname }}"
+    hostip: "{{ ansible_default_ipv4.address }}"
+    # hosts文件中传过来的nodename
+    node_name: "{{ nodename }}"
+    app_version: flannel-v0.11.0-linux-amd64
+    app: flannel
+    # 需要提前在etcd中创建的子网前缀 默认是/coreos.com
+    flanneld_etcd_prefix: /kubernetes/network
+    # 证书和配置
+    cfg_dir: "{{ base_dir }}{{ app }}/cfg/"
+    ssl_dir: "{{ base_dir }}{{ app }}/ssl/"
+    data_dir: "{{ base_dir }}{{ app }}/data/"
+    # 所有的二进制文件都放置在/usr/bin/下面了
+    bin_dir: "{{ base_dir }}{{ app }}/bin/"
+    etcd_ssl_dir: "{{ base_dir }}etcd/ssl/"
+    flanneld_conf: "{{ cfg_dir }}flanneld.conf"
+    etcd_endpoints: "https://172.29.202.145:2379,https://172.29.202.155:2379,https://172.29.202.151:2379"
+  vars_files:
+    - vars/varsfile.yml
+  tasks:
+  - name: "test ping"
+    ping:
+  - name: "init env"
+    shell: "mkdir -p {{ base_dir }} {{ cfg_dir }} {{ ssl_dir }} {{ data_dir }} {{ bin_dir }} {{ package_dir }} {{ server_dir }}"
+
+
+  - name: "wget {{ app_version }}"
+    get_url:
+     url: "{{ item.url }}"
+     dest: "{{ item.dest }}"
+     mode: 0644
+     owner: root
+     group: root
+    with_items:
+        - { url: "{{ download_url }}{{ app_version }}.tar.gz" , dest: "{{ package_dir }}" }
+
+  - name: "untar the {{ app_version }}"
+    unarchive:
+     src: "{{ item.src }}"
+     dest: "{{ item.dest }}"
+     owner: root
+     group: root
+     remote_src: yes
+    with_items:
+      - { src: "{{ package_dir }}{{ app_version }}.tar.gz", dest: "{{ server_dir }}" }
+
+  - name: "copy the {{ app }} execfile"
+    shell: "cp -rp {{ server_dir }}/flanneld /usr/bin/"
+
+  - name: "copy the {{ app }} execfile"
+    shell: "cp -rp {{ server_dir }}/mk-docker-opts.sh {{ bin_dir }} "
+
+  - name: "init the {{ app }} configuration!"
+    template:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      mode: 0755
+      owner: root
+      group: root
+    with_items:
+      #dest后面的引号与大括号中间一定不能有空格,还有后面引号的空格也要取消掉,不然文件会有空格
+      - { src: "templates/flanneld-conf.j2", dest: "{{ flanneld_conf }}" }
+      - { src: "templates/flanneld.service.j2", dest: "/usr/lib/systemd/system/flanneld.service" }
+      - { src: "etcd-ssl/etcd.pem", dest: "{{ etcd_ssl_dir }}" }
+      - { src: "etcd-ssl/etcd-key.pem", dest: "{{ etcd_ssl_dir }}" }
+      - { src: "ca-ssl/ca.pem", dest: "{{ etcd_ssl_dir }}" }
+      - { src: "ca-ssl/ca-key.pem", dest: "{{ etcd_ssl_dir }}" }
+

@@ -1,0 +1,6 @@
+# 指定集群pod地址
+KUBE_PROXY_OPTS="--logtostderr=true \
+--v=4 \
+--hostname-override={{ hostip }} \
+--cluster-cidr=20.0.0.0/16 \
+--kubeconfig={{ cfg_dir }}kube-proxy.kubeconfig --proxy-mode=ipvs"

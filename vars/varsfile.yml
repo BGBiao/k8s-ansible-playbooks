@@ -1,0 +1,19 @@
+---
+  # 包存储服务器
+  download_url: http://172.29.202.140:8881/
+  # 磁盘上的共享磁盘
+  base_dir: /data/
+  package_dir: /opt/packages/
+  server_dir: /opt/servers/
+  flannel_subnet: /run/flannel/subnet.env
+  log_dir: /var/log/
+
+#  package_dir: "{{ base_dir }}packages/"
+#  server_dir: "{{ base_dir }}servers/"
+#  # /opt/etcd/data
+#  etcd_data_dir: "{{ base_dir }}etcd/data/"
+#  cluster_token: etcd_cluster_new
+#  etcd_ssl_dir: "{{ base_dir }}etcd/ssl/"
+#  etcd_conf_dir: /etc/etcd/
+#  etcd_conf: "{{ etcd_conf_dir }}etcd.conf"
+#  etcd_version: etcd-v3.3.11-linux-amd64
