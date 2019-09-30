@@ -1,0 +1,46 @@
+kind: List
+apiVersion: v1
+items:
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: gpu-image-cluster
+    labels:
+      app: gpu-image-cluster
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: gpu-image-cluster
+    template:
+      metadata:
+        name: gpu-image-cluster
+        labels:
+          app: gpu-image-cluster
+      spec:
+        containers:
+        #- image: nvidia/cuda:8.0-runtime-ubuntu14.04
+        - image: bgbiao.cn/ops/image-cluster
+          name: gpu-image-cluster
+          ports:
+          - name: http
+            containerPort: 8080
+          resources:
+            limits:
+              nvidia.com/gpu: 1 # requesting 2 GPUs
+        nodeSelector:
+          gpu: nvidia-tesla-p100
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: gpu-image-cluster
+  spec:
+    type: NodePort
+    #type: ClusterIP
+    ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 38080
+    selector:
+      app: gpu-image-cluster
