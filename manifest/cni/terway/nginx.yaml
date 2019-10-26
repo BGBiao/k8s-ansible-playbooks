@@ -1,0 +1,42 @@
+---
+apiVersion: apps/v1
+kind: Namespace
+metadata:
+  name: myapp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-test
+  namespace: myapp
+spec:
+  revisionHistoryLimit: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-test
+      profile: prod
+  template:
+    metadata:
+      labels:
+        app: nginx-test
+        profile: prod
+    spec:
+      containers:
+      - name: nginx-test-26475
+        image: nginx:latest
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: 200m
+            memory: 215Mi
+          limits:
+            cpu: 200m
+            memory: 215Mi
+            #aliyun/eni: 1
+
