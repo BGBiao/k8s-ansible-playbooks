@@ -50,9 +50,9 @@ roleRef:
   kind: ClusterRole
   name: terway-pod-reader
 subjects:
-  - kind: ServiceAccount
-    name: terway
-    namespace: kube-system
+- kind: ServiceAccount
+  name: terway
+  namespace: kube-system
 
 ---
 
@@ -65,19 +65,24 @@ data:
   eni_conf: |
     {
       "version": "1",
-      "access_key": "your ak",
-      "access_secret": "your as",
-      "service_cidr": "your service_dir(不能和vpc冲突)",
-      "security_group": "your 安全组id",
-      "max_pool_size": 5,
+      "access_key": "ak",
+      "access_secret": "as",
+      "security_group": "安全组",
+      "service_cidr": "service地址(不能和vpc冲突)",
+      "vswitches": {
+        "cn-hangzhou-b": ["虚拟交换机","虚拟交换机1"]
+      },
+      "max_pool_size": 1,
       "min_pool_size": 0
     }
   10-terway.conf: |
     {
       "cniVersion": "0.3.0",
       "name": "terway",
-      "type": "terway"
+      "type": "terway",
+      "eniip_virtual_type": "Veth"
     }
+  # eniip_virtual_type: virtual type for eni multi ip "Veth" || "IPVlan"
 
 ---
 
@@ -111,7 +116,14 @@ spec:
         imagePullPolicy: Always
         securityContext:
           privileged: true
-        command: ['sh', '-c', 'cp /usr/bin/terway /opt/cni/bin/; chmod +x /opt/cni/bin/terway; cp /etc/eni/10-terway.conf /etc/cni/net.d/; modprobe sch_htb || true']
+        command:
+        - 'sh'
+        - '-c'
+        - 'cp /usr/bin/terway /opt/cni/bin/;
+                  chmod +x /opt/cni/bin/terway;
+                  cp /etc/eni/10-terway.conf /etc/cni/net.d/;
+                  modprobe sch_htb || true;
+                  chroot /host sh -c "systemctl disable eni.service; rm -f /etc/udev/rules.d/75-persistent-net-generator.rules /lib/udev/rules.d/60-net.rules /lib/udev/rules.d/61-eni.rules /lib/udev/write_net_rules && udevadm control --reload-rules && udevadm trigger; true"'
         volumeMounts:
         - name: configvolume
           mountPath: /etc/eni
@@ -121,17 +133,20 @@ spec:
           mountPath: /etc/cni/net.d/
         - mountPath: /lib/modules
           name: lib-modules
+        - mountPath: /host
+          name: host-root
       containers:
       - name: terway
         image: registry.aliyuncs.com/acs/terway:v1.0.10.44-gc77da45-aliyun
         imagePullPolicy: Always
+        command: ['/usr/bin/terwayd', '-log-level', 'debug', '-daemon-mode', 'ENIMultiIP']
         securityContext:
           privileged: true
         env:
-          - name: NODE_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: spec.nodeName
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
         volumeMounts:
         - name: configvolume
           mountPath: /etc/eni
@@ -149,15 +164,13 @@ spec:
           name: device-plugin-path
       - name: policy
         image: registry.aliyuncs.com/acs/terway:v1.0.10.44-gc77da45-aliyun
-        command: ["/bin/policyinit.sh"]
         imagePullPolicy: Always
+        command: ["/bin/policyinit.sh"]
         env:
-          - name: NODENAME
-            valueFrom:
-              fieldRef:
-                fieldPath: spec.nodeName
-          - name: Network
-            value: "your vpc subnet"
+        - name: NODENAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
         securityContext:
           privileged: true
         resources:
@@ -178,16 +191,15 @@ spec:
         volumeMounts:
         - mountPath: /lib/modules
           name: lib-modules
-
       volumes:
       - name: configvolume
-        configMap: 
+        configMap:
           name: eni-config
           items:
-            - key: eni_conf
-              path: eni.json
-            - key: 10-terway.conf
-              path: 10-terway.conf
+          - key: eni_conf
+            path: eni.json
+          - key: 10-terway.conf
+            path: 10-terway.conf
       - name: cni-bin
         hostPath:
           path: /opt/cni/bin
@@ -212,6 +224,12 @@ spec:
         hostPath:
           path: /var/lib/kubelet/device-plugins
           type: "Directory"
+      - name: host-root
+        hostPath:
+          path: /
+          type: "Directory"
+
+
 
 ---
 
