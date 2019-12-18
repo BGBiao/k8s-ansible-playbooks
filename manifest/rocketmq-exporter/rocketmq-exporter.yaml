@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rocketmq-exporter
+  namespace: monitoring 
+spec: 
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rocketmq-exporter
+  template:
+    metadata:
+      labels:
+        app: rocketmq-exporter
+    spec:
+      containers:
+      - name: rocketmq-exporter
+        image: harbor.bgbiao.top/soul-ops/rocketmq-exporter:latest
+        ports:
+        - containerPort: 5557
+        resources:
+          limits:
+            cpu: "0.4"
+            memory: "2000Mi"
+          requests:
+            cpu: "0.4"
+            memory: "2000Mi"
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: rocketmq-exporter
+  name: rocketmq-exporter
+  namespace: monitoring
+spec:
+  selector:
+    app: rocketmq-exporter
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 5557
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    app: rocketmq-exporter
+  name: rocketmq-exporter
+  namespace: monitoring
+spec:
+  endpoints:
+  - interval: 15s
+  selector:
+    matchLabels:
+      app: rocketmq-exporter

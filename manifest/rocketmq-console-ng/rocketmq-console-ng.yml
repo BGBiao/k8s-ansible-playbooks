@@ -1,0 +1,67 @@
+kind: Deployment
+apiVersion: extensions/v1beta1
+metadata:
+  name: rocketmq-console-ng
+  labels:
+    app: rocketmq-console-ng
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rocketmq-console-ng
+  template:
+    metadata:
+      labels:
+        app: rocketmq-console-ng
+    spec:
+      containers:
+      - name: rocketmq-console-ng
+        image: harbor.bgbiao.top/soul-ops/rocketmq-console-ng:1.1.1
+        env:
+        - name: JAVA_OPTS
+          value: -Drocketmq.namesrv.addr=172.16.79.4:9876;172.16.79.3:9876
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 100m
+            memory: 200Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rocketmq-console-ng
+spec:
+  selector:
+    app: rocketmq-console-ng
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+
+
+---
+
+
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  generation: 1
+  name: rocketmq-console-ng.bgbiao.top
+spec:
+  rules:
+  - host: rocketmq-console-ng.bgbiao.top
+    http:
+      paths:
+      - backend:
+          serviceName: rocketmq-console-ng
+          servicePort: 80

@@ -1,0 +1,27 @@
+---
+apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+kind: Deployment
+metadata:
+  name: mysql-test
+spec:
+  selector:
+    matchLabels:
+      app: mysql-test
+  template:
+    metadata:
+      labels:
+        app: mysql-test
+    spec:
+      containers:
+      - image: harbor.bgbiao.top/soul-ops/mysql:5.6
+        name: mysql-test
+        command: ["/usr/local/bin/docker-entrypoint.sh"]
+        args: ["--character-set-server=utf8mb4","--collation-server=utf8mb4_unicode_ci"]
+        env:
+          # Use secret in real usage
+          # You need to specify one of MYSQL_ROOT_PASSWORD, MYSQL_ALLOW_EMPTY_PASSWORD and MYSQL_RANDOM_ROOT_PASSWORD
+        - name: MYSQL_ROOT_PASSWORD
+          value: Soul-Ops-Team
+        ports:
+        - containerPort: 3306
+          name: mysql-test

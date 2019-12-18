@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sh-mongodb-exporter
+  namespace: monitoring
+  labels:
+    k8s-app: sh-mongodb-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: sh-mongodb-exporter
+  template:
+    metadata:
+      labels:
+        k8s-app: sh-mongodb-exporter
+    spec:
+      nodeSelector:
+        beta.kubernetes.io/os: linux
+      containers:
+      - name: sh-mongodb-exporter
+        image: harbor.bgbiao.top/monitor/mongodb_exporter:v1
+        imagePullPolicy: IfNotPresent
+        resources:
+          limits:
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        args: ["--mongodb.uri=mongodb://172.16.77.205:28017,172.16.77.206:28017,172.16.77.207:28017"]
+        ports:
+        - containerPort: 9216
+          hostPort: 9216
+          name: mong-exporter
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 9216
+            scheme: HTTP
+          initialDelaySeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 9216
+            scheme: HTTP
+      dnsPolicy: Default
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sh-mongodb-exporter
+  namespace: monitoring
+  labels:
+    k8s-app: sh-mongodb-exporter
+spec:
+  selector:
+    k8s-app: sh-mongodb-exporter
+  ports:
+  - name: metrics
+    port: 9216
+    targetPort: 9216
+    protocol: TCP
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: sh-mongodb-exporter
+  namespace: monitoring
+spec:
+  rules:
+  - host: sh-mongodb-exporter.bgbiao.top
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: sh-mongodb-exporter
+          servicePort: 9216

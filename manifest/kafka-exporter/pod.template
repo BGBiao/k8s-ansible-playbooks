@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: post-kafka-exporter
+  namespace: monitoring
+  labels:
+    k8s-app: post-kafka-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: post-kafka-exporter
+  template:
+    metadata:
+      labels:
+        k8s-app: post-kafka-exporter
+    spec:
+      nodeSelector:
+        beta.kubernetes.io/os: linux
+      containers:
+      - name: post-kafka-exporter
+        image: harbor.bgbiao.top/monitor/kafka_exporter:v1
+        imagePullPolicy: IfNotPresent
+        resources:
+          limits:
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        args: ["--kafka.server=172.16.217.36:9092", "--kafka.server=172.16.217.37:9092", "--kafka.server=172.16.217.38:9092", "--kafka.server=172.16.166.148:9092", "--kafka.server=172.16.166.149:9092", "--kafka.server=172.16.166.150:9092", "--kafka.server=172.16.166.204:9092", "--kafka.server=172.16.166.205:9092", "--kafka.server=172.16.166.206:9092", "--kafka.server=172.16.167.109:9092", "--kafka.server=172.16.167.110:9092", "--kafka.server=172.16.167.111:9092", "--kafka.server=172.16.167.112:9092", "--kafka.version=1.0.1"]
+        ports:
+        - containerPort: 9308
+          hostPort: 9308
+          name: kafka-exporter
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 9308
+            scheme: HTTP
+          initialDelaySeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 9308
+            scheme: HTTP
+      dnsPolicy: Default
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: post-kafka-exporter
+  namespace: monitoring
+  labels:
+    k8s-app: post-kafka-exporter
+spec:
+  selector:
+    k8s-app: post-kafka-exporter
+  ports:
+  - name: metrics
+    port: 9308
+    targetPort: 9308
+    protocol: TCP
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: post-kafka-exporter
+  namespace: monitoring
+spec:
+  rules:
+  - host: post-kafka-exporter.bgbiao.top
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: post-kafka-exporter
+          servicePort: 9308

@@ -1,0 +1,52 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+spec:
+  selector:
+    app: mysql
+  ports:
+  - protocol: "TCP"
+    port: 3306
+    targetPort: 3306
+    nodePort: 33306
+  type: NodePort
+---
+apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+kind: Deployment
+metadata:
+  name: mysql
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - image: harbor.bgbiao.top/soul-ops/mysql:5.6
+        name: mysql
+        command: ["/usr/local/bin/docker-entrypoint.sh"]
+        args: ["--character-set-server=utf8mb4","--collation-server=utf8mb4_unicode_ci"]
+        env:
+          # Use secret in real usage
+          # You need to specify one of MYSQL_ROOT_PASSWORD, MYSQL_ALLOW_EMPTY_PASSWORD and MYSQL_RANDOM_ROOT_PASSWORD
+        - name: MYSQL_ROOT_PASSWORD
+          value: Soul-Ops-Team
+        - name: TZ
+          value: "Asia/Shanghai"
+        ports:
+        - containerPort: 3306
+          name: mysql
+        volumeMounts:
+        - name: mysql-persistent-storage
+          mountPath: /var/lib/mysql
+      volumes:
+      - name: mysql-persistent-storage
+        persistentVolumeClaim:
+          claimName: mysql-data

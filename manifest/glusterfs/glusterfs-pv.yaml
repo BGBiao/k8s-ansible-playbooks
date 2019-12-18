@@ -1,0 +1,15 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: k8s-gluster-cluster
+  name: dbs
+spec:
+  capacity:
+        storage: 200Gi    #pv申请的容量大小
+  accessModes:
+        - ReadWriteMany
+  glusterfs:
+        endpoints: "glusterfs-cluster"          #service的名称
+        path: "k8s"                          #glusterfs的volume名称
+        readOnly: false
