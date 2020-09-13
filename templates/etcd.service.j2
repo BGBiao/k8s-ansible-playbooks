@@ -9,25 +9,10 @@ Documentation=https://github.com/coreos
 Type=notify
 # 数据目录，需要提前进行创建
 WorkingDirectory={{ data_dir }}
+# 在配置文件中声明了很多变量，因此在ExecStart中就不用强制指定某些参数了，否则使用systemd管理会异常
 EnvironmentFile=-{{ etcd_conf }}
 ExecStart=/bin/bash -c "GOMAXPROCS=$(nproc) /usr/bin/etcd \
-  --name ${ETCD_NAME} \
-  --initial-advertise-peer-urls ${ETCD_INITIAL_ADVERTISE_PEER_URLS} \
-  --listen-peer-urls ${ETCD_LISTEN_PEER_URLS} \
-  --listen-client-urls ${ETCD_LISTEN_CLIENT_URLS},http://127.0.0.1:2379 \
-  --advertise-client-urls ${ETCD_ADVERTISE_CLIENT_URLS} \
-  --initial-cluster-token ${ETCD_INITIAL_CLUSTER_TOKEN} \
-  --initial-cluster ${ETCD_INITIAL_CLUSTER} \
-  --initial-cluster-state ${ETCD_INITIAL_CLUSTER_STATE} \
-  --data-dir=${ETCD_DATA_DIR} \
-  --cert-file=${ETCD_CERT_FILE} \
-  --key-file=${ETCD_KEY_FILE} \
-  --trusted-ca-file=${ETCD_TRUSTED_CA_FILE} \
-  --client-cert-auth=${ETCD_CLIENT_CERT_AUTH} \
-  --peer-cert-file=${ETCD_PEER_CERT_FILE} \
-  --peer-key-file=${ETCD_PEER_KEY_FILE} \
-  --peer-trusted-ca-file=${ETCD_PEER_TRUSTED_CA_FILE} \
-  --peer-client-cert-auth=${ETCD_PEER_CLIENT_CERT_AUTH}"
+  --peer-client-cert-auth=true"
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536

@@ -1,11 +1,11 @@
 ---
   # 包存储服务器
-  download_url: http://172.29.202.140:8881/
+  download_url: http://192.168.0.230:8000/
   # 磁盘上的共享磁盘
   base_dir: /data/
   package_dir: /opt/packages/
   server_dir: /opt/servers/
-  flannel_subnet: /run/flannel/subnet.env
+  #flannel_subnet: /run/flannel/subnet.env
   log_dir: /var/log/
 
 #  package_dir: "{{ base_dir }}packages/"
