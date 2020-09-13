@@ -299,6 +299,10 @@ ETCD_INITIAL_ADVERTISE_PEER_URLS="https://192.168.0.145:2380"
 
 # 批量启动集群(这里只是为了演示整个ansible剧本的标准化和准确性，其实启动也可以直接添加至etcd-install剧本中)
 
+$ ansible -i hosts all -m shell -a 'systemctl daemon-reload && systemctl restart etcd && systemctl enable etcd'
+....
+....
+
 
 
 
