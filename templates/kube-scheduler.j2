@@ -5,6 +5,6 @@ KUBE_SCHEDULER_OPTS="--bind-address={{ hostip }} \
 --requestheader-group-headers=X-Remote-Group \
 --requestheader-username-headers=X-Remote-User  \
 --leader-elect=true \
---logtostderr=true --v=4 --master=127.0.0.1:8080 \
+--logtostderr=false --v=4 --master=127.0.0.1:8080 \
 --log-dir={{ log_dir }}{{ app }}"
 

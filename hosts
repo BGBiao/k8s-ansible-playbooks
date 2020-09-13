@@ -2,3 +2,4 @@
 192.168.0.230 nodename=etcd01
 192.168.0.145 nodename=etcd02
 192.168.0.23 nodename=etcd03
+

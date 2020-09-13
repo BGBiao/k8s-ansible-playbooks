@@ -377,3 +377,154 @@ componentstatus/etcd-1               Healthy   {"health":"true"}   Warning: v1 C
 
 
 ```
+
+在`kube-master`节点的所有组件(kube-apiserver,kube-controller-manager,kube-scheduler)部署成功后，我们可以使用`kubectl get cs,nodes`来查看组件的状态是否健康，但是我们也关注到了一个细节，就是有一条`Warning`的日志提示`v1版本的 ComponentStatus`接口将在以后的版本被废弃掉。
+
+通过查阅官方[v1.19-Release-Notes-changes-by-kind](https://kubernetes.io/docs/setup/release/notes/#changes-by-kind)中提到下面一句话: 
+
+> Kube-apiserver: the componentstatus API is deprecated. This API provided status of etcd, kube-scheduler, and kube-controller-manager components, but only worked when those components were local to the API server, and when kube-scheduler and kube-controller-manager exposed unsecured health endpoints. Instead of this API, etcd health is included in the kube-apiserver health check and kube-scheduler/kube-controller-manager health checks can be made directly against those components' health endpoints. (#93570, @liggitt) [SIG API Machinery, Apps and Cluster Lifecycle]
+
+大概意思就是说: `kube-apiserver` 在未来废弃了`componentstatus`这个API。该API提供了etcd,kube-shceduler,kube-controller-manager 组件的状态，但是它仅当这些组件和API Server在一起部署时，并且当kube-scheduler和kube-controller-manager 暴露了非安全的健康端点时，才正常工作。为了代替该API，etcd的健康检查呗包含进了kube-apiserver 的健康检查逻辑中，并且kube-sheduler/kube-controller-manager 可以直接针对自己的健康检查端点进行检查。因此，componentstatus 这个接口就没有必要了。
+
+看到这里，会不会觉得，顶级项目的设计和演进就是这么干净和利落，回头在想想自己公司具体的代码吧😭
+
+
+### Kube-node部署
+
+注意: 在K8S的整个组件和概念中，其实node节点仅有两个角色，即`kube-proxy`和`kubelet`，前者主要负责将所有的pod的网络通过一些列的规则在整个集群打通，而后者主要负责整个pod的生命周期管理。 而至于真正Pod中的容器生命周围管理则通过Plugin的方式由一些Runtime进行接入，通常我们常用且生产成熟的就是大名鼎鼎的Docker了；但像Docker这种Runtime 其本身的网络又无法支撑整个集群以及业务的需求，因此网络上的支撑，也由kubelet来通过Plugin的方式来进行CNI接入，在通用开源的解决方案里，比较出名的就是 Flannel 和 Calico 两个组件了。
+
+因此，一个可真正运行的node节点包含以下组件和插件: 
+
+- kubelet: Pod的生命周期管理
+- kube-proxy: 集群网络代理
+- Runtime: 容器运行时(Docker)
+- CNI: 容器网络接口(Flannel/Calico) 【由于flannel较为简单，之前一直使用flannel，但是flannel默认不支持ETCD V3接口，这次将使用Calico来构建容器网络】
+
+
+#### 0.生成bootstrap配置文件和kube-proxy配置文件
+
+````
+$ export BOOTSTRAP_TOKEN=`cat /data/kubernetes/cfg/token.csv  | awk -F ',' '{print $1}'`
+$ echo ${BOOTSTRAP_TOKEN}
+
+# 为了验证集群，我们可以先使用master的任意节点来部署node节点(后期可替换成k8s证书中hosts部分的地址)
+# 当然如果有完备的高可用API网关或者SLB之类的，可以直接将kube apiserver的接口对外地址配置
+$ export KUBE_APISERVER="https://192.168.0.230:6443"
+
+$ ls /data/kubernetes/ssl/ca.pem
+# 配置bootstrap配置文件
+$ kubectl config set-cluster kubernetes --certificate-authority=/data/kubernetes/ssl/ca.pem --embed-certs=true --server=${KUBE_APISERVER} --kubeconfig=bootstrap.kubeconfig
+$ kubectl config set-credentials kubelet-bootstrap --token=${BOOTSTRAP_TOKEN} --kubeconfig=bootstrap.kubeconfig
+$ kubectl config set-context default --cluster=kubernetes  --user=kubelet-bootstrap --kubeconfig=bootstrap.kubeconfig
+
+# 在当前环境中使用该上下文
+$ kubectl config use-context default --kubeconfig=bootstrap.kubeconfig
+
+# 配置kube-proxy的配置文件
+$ kubectl config set-cluster kubernetes --certificate-authority=/data/kubernetes/ssl/ca.pem --embed-certs=true --server=${KUBE_APISERVER} --kubeconfig=kube-proxy.kubeconfig
+$ kubectl config set-credentials kube-proxy --client-certificate=/data/kubernetes/ssl/kube-proxy.pem --client-key=/data/kubernetes/ssl/kube-proxy-key.pem --embed-certs=true --kubeconfig=kube-proxy.kubeconfig
+$ kubectl config set-context default --cluster=kubernetes --cluster=kubernetes --user=kube-proxy --kubeconfig=kube-proxy.kubeconfig
+
+# 在当前环境中使用该上下文
+$ kubectl config use-context default --kubeconfig=kube-proxy.kubeconfig
+
+# 在集群中创建一个用于bootstrap 的clusterrolebinding 将system:node-bootstrapper 角色绑定至用户kubelet-bootstrap 
+$ kubectl create clusterrolebinding kubelet-bootstrap --clusterrole=system:node-bootstrapper --user=kubelet-bootstrap
+```
+
+然后将生成的`bootstrap.kubeconfig` 和 `kube-proxy.kubeconfig` 拷贝到项目的 `templates/` 下。
+
+
+#### 1.批量部署Node节点角色
+
+`注意:` 由于我们当前将master节点也充当node节点的角色，因此下载和部署kubernetes源码包的部分就可以略过了，唯一需要关心的就是`kubelet`和`kube-proxy`的配置问题了。
+
+```
+$ ansible-playbook -i hosts -e host=master k8s-slave-install.yml --tags=config
+....
+....
+
+PLAY RECAP ************************************************************************************************************************************
+192.168.0.145              : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+192.168.0.23               : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+192.168.0.230              : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+
+```
+
+
+需要注意的是，我们在kubelet 的启动逻辑里设置了kubelet 必须在docker.service 启动之后进行启动，为了保证服务的尽可能短的影响周期。
+
+此时，如果节点上的`docker`服务没有启动，直接启动`kubelet`会提示`kubelet.service`不存在。
+
+
+#### 3.部署Runtime 运行时Docker组件
+
+```
+# 这里需要先部署docker的运行时
+$ ansible-playbook -i hosts -e host=all docker-install.yml
+....
+....
+PLAY RECAP ************************************************************************************************************************************
+192.168.0.145              : ok=7    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+192.168.0.23               : ok=7    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+192.168.0.230              : ok=7    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+
+
+# 启动docker，kubelet，kube-proxy 服务
+$ ansible -i hosts all -m shell -a "systemctl daemon-reload && systemctl restart docker"
+.....
+.....
+
+
+```
+
+
+#### 4.配置Node节点，并生成kubelet证书
+
+```
+$ ansible -i hosts all -m shell -a "systemctl daemon-reload && systemctl restart kubelet kube-proxy"
+....
+....
+
+
+# kubelet启动后，会自动向kube apiserver 发起认证请求。
+$ kubectl get csr
+NAME                                                   AGE    SIGNERNAME                                    REQUESTOR           CONDITION
+node-csr-01keemXrwk85QRvmxmKD7BL8Pe8-UpCYmEOdHovJMTE   40s    kubernetes.io/kube-apiserver-client-kubelet   kubelet-bootstrap   Pending
+node-csr-mhdJODMPp8mQwJrnW-Gl2baQlWWgcrOvrYt3jmbw-dM   40s    kubernetes.io/kube-apiserver-client-kubelet   kubelet-bootstrap   Pending
+node-csr-rgY6WzL2gwGFa5XyWLgJ4_ypJUPtbruuLloygUQ80P8   2m3s   kubernetes.io/kube-apiserver-client-kubelet   kubelet-bootstrap   Pending
+
+# 手动接受node的请求
+$ kubectl certificate approve node-csr-rgY6WzL2gwGFa5XyWLgJ4_ypJUPtbruuLloygUQ80P8
+.....
+.....
+
+# 查看csr请求状态（发现已经都被Approved）
+$ kubectl get csr
+NAME                                                   AGE     SIGNERNAME                                    REQUESTOR           CONDITION
+node-csr-01keemXrwk85QRvmxmKD7BL8Pe8-UpCYmEOdHovJMTE   3m11s   kubernetes.io/kube-apiserver-client-kubelet   kubelet-bootstrap   Approved,Issued
+node-csr-mhdJODMPp8mQwJrnW-Gl2baQlWWgcrOvrYt3jmbw-dM   3m11s   kubernetes.io/kube-apiserver-client-kubelet   kubelet-bootstrap   Approved,Issued
+node-csr-rgY6WzL2gwGFa5XyWLgJ4_ypJUPtbruuLloygUQ80P8   4m34s   kubernetes.io/kube-apiserver-client-kubelet   kubelet-bootstrap   Approved,Issued
+
+# 当node节点成功被允许后，我们之前设置的一些配置就会自动向kubelet 进行颁发证书。
+# 当没有接受node的csr请求时，客户端的证书属于颁发中，当接受后，该证书正式生成，从此kubelet就可以愉快的玩耍了
+
+$ ls -lt /data/kubernetes/ssl/* | head -5
+lrwxrwxrwx 1 root root   59 Sep 13 16:10 /data/kubernetes/ssl/kubelet-client-current.pem -> /data/kubernetes/ssl/kubelet-client-2020-09-13-16-10-05.pem
+-rw------- 1 root root 1228 Sep 13 16:10 /data/kubernetes/ssl/kubelet-client-2020-09-13-16-10-05.pem
+-rw-r--r-- 1 root root 2274 Sep 13 16:05 /data/kubernetes/ssl/kubelet.crt
+-rw------- 1 root root 1675 Sep 13 16:05 /data/kubernetes/ssl/kubelet.key
+
+# 此时我们可以查看集群的节点状态信息
+
+$ kubectl get nodes
+NAME            STATUS   ROLES    AGE     VERSION
+192.168.0.145   Ready    <none>   4m33s   v1.19.0
+192.168.0.23    Ready    <none>   4m17s   v1.19.0
+192.168.0.230   Ready    <none>   4m11s   v1.19.0
+
+```
+
+至此，我们已经可以看到，我们的node节点现在看起来也已经就绪了。不过真的完全就绪了吗？还记得前面说到Node节点真正可运行，除了Runtime的Docker之外，还是需要CNI 来将集群的Pod打通的。
+
+#### 4.部署CNI插件

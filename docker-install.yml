@@ -5,7 +5,7 @@
     hostip: "{{ ansible_default_ipv4.address }}"
     node_name: "{{ ansible_hostname }}"
     ipv6: "{{ ansible_all_ipv6_addresses[0].split(':')[-1] }}"
-    app_version: docker-19.03.1
+    app_version: docker-19.03.9
     app: docker
     # 证书和配置
     cfg_dir: "{{ base_dir }}{{ app }}/cfg/"

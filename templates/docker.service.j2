@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=notify
 # flunnel的subnet信息/run/flannel/subnet.env 
-EnvironmentFile={{ flannel_subnet }}
+# EnvironmentFile=
 ExecStart=/usr/bin/dockerd  $DOCKER_NETWORK_OPTIONS --live-restore --data-root {{ data_dir }}
 ExecReload=/bin/kill -s HUP $MAINPID
 LimitNOFILE=infinity
