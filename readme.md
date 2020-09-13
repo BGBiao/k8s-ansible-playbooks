@@ -326,3 +326,54 @@ $ ansible -i hosts all -m shell -a 'etcdctl --cacert="/data/etcd/ssl/ca.pem" --k
 ```
 
 
+### Kube-Master部署
+
+- kube-apiserver
+- kube-scheduler
+- kube-controller-manager
+
+`注意:` k8s-master的证书我们前面已经生成了,在k8s-ssl目录(master节点统一使用一套证书)
+
+`注意:` 在`k8s-master-install.yml`中的`app_version`需要改成官方默认下载的二进制包的目录；`etcd_endpoints`需要改成上面的etcd的地址。
+
+```
+# 生成Bootstrapping配置文件(用来对kubelet第一次授权)
+$ echo `head -c 16 /dev/urandom | od -An -t x | tr -d ' '`,kubelet-bootstrap,10001,\"system:kubelet-bootstrap\"  > templates/token.csv
+$ cat templates/token.csv
+
+# 使用ansible-playbooks统一部署k8s-master基础环境
+$ ansible-playbook -i hosts -e host=master k8s-master-install.yml
+.....
+.....
+
+# 批量启动k8s-master节点全部组件
+$ ansible -i hosts master -m shell -a "systemctl daemon-reload && systemctl restart kube-apiserver kube-controller-manager kube-scheduler && systemctl enable kube-apiserver kube-controller-manager kube-scheduler"
+
+
+# 检查master节点角色是否正常
+# 这里可以看到在v1.19版本中，v1版本的ComponentStatus 已经被弃用
+$ ansible -i hosts all -m shell -a "kubectl get cs,nodes"
+192.168.0.230 | CHANGED | rc=0 >>
+NAME                                 STATUS    MESSAGE             ERROR
+componentstatus/controller-manager   Healthy   ok
+componentstatus/scheduler            Healthy   ok
+componentstatus/etcd-0               Healthy   {"health":"true"}
+componentstatus/etcd-2               Healthy   {"health":"true"}
+componentstatus/etcd-1               Healthy   {"health":"true"}   Warning: v1 ComponentStatus is deprecated in v1.19+
+192.168.0.145 | CHANGED | rc=0 >>
+NAME                                 STATUS    MESSAGE             ERROR
+componentstatus/controller-manager   Healthy   ok
+componentstatus/scheduler            Healthy   ok
+componentstatus/etcd-1               Healthy   {"health":"true"}
+componentstatus/etcd-0               Healthy   {"health":"true"}
+componentstatus/etcd-2               Healthy   {"health":"true"}   Warning: v1 ComponentStatus is deprecated in v1.19+
+192.168.0.23 | CHANGED | rc=0 >>
+NAME                                 STATUS    MESSAGE             ERROR
+componentstatus/scheduler            Healthy   ok
+componentstatus/controller-manager   Healthy   ok
+componentstatus/etcd-0               Healthy   {"health":"true"}
+componentstatus/etcd-2               Healthy   {"health":"true"}
+componentstatus/etcd-1               Healthy   {"health":"true"}   Warning: v1 ComponentStatus is deprecated in v1.19+
+
+
+```
