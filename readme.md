@@ -528,3 +528,55 @@ NAME            STATUS   ROLES    AGE     VERSION
 至此，我们已经可以看到，我们的node节点现在看起来也已经就绪了。不过真的完全就绪了吗？还记得前面说到Node节点真正可运行，除了Runtime的Docker之外，还是需要CNI 来将集群的Pod打通的。
 
 #### 4.部署CNI插件
+
+`注意:` 由于新版本的etcd默认是V3接口的，并且Flannel默认不支持V2接口，因此我们使用Clico进行安装。
+
+`注意:` 由于我们是使用额外的CNI插件，因此在Kubelet的配置中需要明确指定如下配置: 
+
+```
+--network-plugin=cni --cni-conf-dir=/etc/cni/net.d --cni-bin-dir=/opt/cni/bin
+
+# 在指定了上述配置后，重启kubele组件会重启成功，但是会发现kubectl get nodes 时节点处于未就绪状态，此时需要安装CNI插件后即可
+```
+
+[Clico](https://docs.projectcalico.org/getting-started/kubernetes/quickstart)
+
+
+```
+$ mkdir -p /etc/cni/net.d /opt/cni/bin
+
+$ kubectl create -f https://docs.projectcalico.org/manifests/tigera-operator.yaml
+
+
+$ kubectl create -f https://docs.projectcalico.org/manifests/custom-resources.yaml
+ 
+$ watch kubectl get pods -n calico-system
+
+$ kubectl get pods -n tigera-operator
+NAME                              READY   STATUS    RESTARTS   AGE
+tigera-operator-b96747c7d-mmv9z   1/1     Running   0          6m41s
+
+$ kubectl get pods -n calico-system
+NAME                                       READY   STATUS              RESTARTS   AGE
+calico-kube-controllers-69fbbf7967-sv9jk   1/1     Running             0          5m35s
+calico-node-cgrdz                          0/1     Init:0/2            0          5m35s
+calico-node-cr7v8                          1/1     Running             0          5m35s
+calico-node-vnw7t                          0/1     Init:0/2            0          5m35s
+calico-typha-559c75f66d-j59mm              1/1     Running             0          3m37s
+calico-typha-559c75f66d-nlgqg              0/1     ContainerCreating   0          5m36s
+calico-typha-559c75f66d-rckgk              0/1     ContainerCreating   0          3m37s
+
+
+# 可以看到，当一个calico-node节点安装成功后，对应的node节点状态就会变为就绪状态
+$ kubectl get nodes
+NAME            STATUS     ROLES    AGE   VERSION
+192.168.0.145   NotReady   <none>   21h   v1.19.0
+192.168.0.23    NotReady   <none>   21h   v1.19.0
+192.168.0.230   Ready      <none>   21h   v1.19.0
+
+
+
+
+
+```
+
