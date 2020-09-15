@@ -541,6 +541,8 @@ NAME            STATUS   ROLES    AGE     VERSION
 
 [Clico](https://docs.projectcalico.org/getting-started/kubernetes/quickstart)
 
+[从头开始安装Calico网络](https://docs.projectcalico.org/getting-started/kubernetes/hardway/)
+
 
 ```
 $ mkdir -p /etc/cni/net.d /opt/cni/bin
@@ -575,8 +577,154 @@ NAME            STATUS     ROLES    AGE   VERSION
 192.168.0.230   Ready      <none>   21h   v1.19.0
 
 
+$ kubectl get pods -n calico-system
+NAME                                       READY   STATUS    RESTARTS   AGE
+calico-kube-controllers-69fbbf7967-sv9jk   1/1     Running   0          13h
+calico-node-cgrdz                          1/1     Running   0          13h
+calico-node-cr7v8                          1/1     Running   0          13h
+calico-node-vnw7t                          1/1     Running   0          13h
+calico-typha-559c75f66d-j59mm              1/1     Running   0          13h
+calico-typha-559c75f66d-nlgqg              1/1     Running   0          13h
+calico-typha-559c75f66d-rckgk              1/1     Running   0          13h
 
+$ kubectl get nodes
+NAME            STATUS   ROLES    AGE   VERSION
+192.168.0.145   Ready    <none>   35h   v1.19.0
+192.168.0.23    Ready    <none>   35h   v1.19.0
+192.168.0.230   Ready    <none>   35h   v1.19.0
+
+# 当节点都就绪后，每个节点会有具体的CNI插件，CNI的配置信息以及CNI的pod的kubeconfig
+
+$ ls /opt/cni/bin/
+bandwidth  calico  calico-ipam  flannel  host-local  install  loopback  portmap  tuning
+
+$ ls /etc/cni/net.d/
+10-calico.conflist  calico-kubeconfig
+$ cat /etc/cni/net.d/10-calico.conflist
+{
+  "name": "k8s-pod-network",
+  "cniVersion": "0.3.1",
+  "plugins": [
+    {
+      "type": "calico",
+      "datastore_type": "kubernetes",
+      "mtu": 1410,
+      "nodename_file_optional": false,
+      "log_file_path": "/var/log/calico/cni/cni.log",
+      "ipam": {
+          "type": "calico-ipam",
+          "assign_ipv4" : "true",
+          "assign_ipv6" : "false"
+      },
+      "container_settings": {
+          "allow_ip_forwarding": false
+      },
+      "policy": {
+          "type": "k8s"
+      },
+      "kubernetes": {
+          "kubeconfig": "/etc/cni/net.d/calico-kubeconfig"
+      }
+    },
+    {"type": "portmap", "snat": true, "capabilities": {"portMappings": true}}
+  ]
+
+```
+
+#### 5.配置Calico网络
+
+[calicoctl](https://docs.projectcalico.org/getting-started/clis/calicoctl/install)
+
+```
+# 下载calicoctl 
+$ curl -O -L  https://github.com/projectcalico/calicoctl/releases/download/v3.16.1/calicoctl
+
+$ chmod a+x calicoctl && mv calicoctl /usr/sbin/
+
+```
+
+[配置calicoctl连接到数据存储层](https://docs.projectcalico.org/getting-started/clis/calicoctl/configure/)
+
+Calicoctl 可以配置从etcd集群或者Kubernetes集群的API中去进行读写相关的数据。
+
+- [etcd datastore](https://docs.projectcalico.org/getting-started/clis/calicoctl/configure/etcd)
+- [kubernetes API datastore](https://docs.projectcalico.org/getting-started/clis/calicoctl/configure/kdd)
+
+注意: `calicoctl`程序默认从配置文件`/etc/calico/calicoctl.cfg`中进行读取相关的配置文件，也可以使用`--config`参数指定配置文件。同时，如果程序无法从配置文件中读取，将会从默认的环境变量中进行相关配置的使用。
+
+```
+# calicoct.cfg 配置文件实例
+apiVersion: projectcalico.org/v3
+kind: CalicoAPIConfig
+metadata:
+spec:
+  datastoreType: "etcdv3"
+  etcdEndpoints: "http://etcd1:2379,http://etcd2:2379"
+  ...
+
+```
+
+**配置ETCD的数据存储**
+
+```
+# 将etcd相关的证书准备到固定的位置
+
+$ cat  /etc/calico/calicoctl.cfg
+apiVersion: projectcalico.org/v3
+kind: CalicoAPIConfig
+metadata:
+spec:
+  etcdEndpoints: https://192.168.0.230:2379,https://192.168.0.23:2379,https://192.168.0.145:2379
+  etcdKeyFile: /data/etcd/ssl/etcd-key.pem
+  etcdCertFile: /data/etcd/ssl/etcd.pem
+  etcdCACertFile: /data/etcd/ssl/ca.pem
+
+
+# 获取calicoctl 的calico节点
+$ calicoctl get nodes
+NAME
+
+```
+
+**配置Kubernetes API的数据存储**
+
+```
+$  export KUBECONFIG=/data/kubernetes/cfg/kubelet.kubeconfig
+$  export DATASTORE_TYPE=kubernetes
+
+$ calicoctl get nodes -o wide
+NAME            ASN         IPV4               IPV6
+192.168.0.145   (unknown)   192.168.0.145/24
+192.168.0.23    (unknown)   192.168.0.23/24
+192.168.0.230   (unknown)   192.168.0.230/24
+
+# 也可以配置到配置文件中
+$ cat /etc/calico/calicoctl.cfg
+apiVersion: projectcalico.org/v3
+kind: CalicoAPIConfig
+metadata:
+spec:
+  datastoreType: "kubernetes"
+  kubeconfig: "/data/kubernetes/cfg/kubelet.kubeconfig"
 
 
 ```
 
+也可以将`calicoctl` 直接以pod的方式部署: 
+
+```
+# etcd为后端存储的pod
+$ kubectl apply -f https://docs.projectcalico.org/manifests/calicoctl-etcd.yaml
+
+# kubernetes api 为后端存储的Pod
+$  kubectl apply -f https://docs.projectcalico.org/manifests/calicoctl.yaml
+
+
+# 使用calicoctl 查看集群相关信息
+$ kubectl exec -ti -n kube-system calicoctl -- /calicoctl get profiles -o wide
+
+$ alias calicoctl="kubectl exec -i -n kube-system calicoctl -- /calicoctl"
+
+# 然后就可以在节点上开心的执行calicoctl 命令了
+
+```
