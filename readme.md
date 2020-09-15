@@ -600,6 +600,8 @@ bandwidth  calico  calico-ipam  flannel  host-local  install  loopback  portmap 
 
 $ ls /etc/cni/net.d/
 10-calico.conflist  calico-kubeconfig
+
+# 其实这里能够看出来，我们的calico的CNI插件，默认是使用的kubernetes的datastore方式
 $ cat /etc/cni/net.d/10-calico.conflist
 {
   "name": "k8s-pod-network",
@@ -726,5 +728,16 @@ $ kubectl exec -ti -n kube-system calicoctl -- /calicoctl get profiles -o wide
 $ alias calicoctl="kubectl exec -i -n kube-system calicoctl -- /calicoctl"
 
 # 然后就可以在节点上开心的执行calicoctl 命令了
+
+$ calicoctl node status
+Calico process is running.
+
+IPv4 BGP status
++---------------+-------------------+-------+----------+-------------+
+| PEER ADDRESS  |     PEER TYPE     | STATE |  SINCE   |    INFO     |
++---------------+-------------------+-------+----------+-------------+
+| 192.168.0.145 | node-to-node mesh | up    | 03:06:11 | Established |
+| 192.168.0.23  | node-to-node mesh | up    | 03:06:45 | Established |
++---------------+-------------------+-------+----------+-------------+
 
 ```
