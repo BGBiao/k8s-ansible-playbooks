@@ -967,9 +967,15 @@ ingress.extensions/traefik-web-ui configured
 $ kubectl label node 192.168.0.145 node-role.kubernetes.io/master=""
 $ kubectl label node 192.168.0.23 node-role.kubernetes.io/master=""
 $ kubectl label node 192.168.0.230 node-role.kubernetes.io/master=""
+
 $ kubectl taint nodes 192.168.0.145 node-role.kubernetes.io/master=:NoSchedule
 $ kubectl taint nodes 192.168.0.23 node-role.kubernetes.io/master=:NoSchedule
 $ kubectl taint nodes 192.168.0.230 node-role.kubernetes.io/master=:NoSchedule
+
+# 去除污点
+$ kubectl taint nodes 192.168.0.230 node-role.kubernetes.io/master-
+node/192.168.0.230 untainted
+
 
 $ kubectl get nodes
 NAME            STATUS   ROLES    AGE     VERSION
