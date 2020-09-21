@@ -12,6 +12,8 @@ spec:
     port: 80
     targetPort: 8080
 ---
+# extensions/v1beta1 Ingress is deprecated in v1.14+, unavailable in v1.22+; use networking.k8s.io/v1 Ingress
+# but the networking.k8s.io/v1 ingress format is changed
 apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:

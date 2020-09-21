@@ -835,12 +835,332 @@ $ ansible-playbook -i hosts -e host=node-new k8s-slave-install.yml
 # 依次启动flanneld,docker,kubelet和kube-proxy服务
 $ ansible -i hosts node-new -m shell -a " systemctl daemon-reload && systemctl restart docker kubelet kube-proxy && systemctl enable docker kubelet kube-proxy"
 
+$ kubectl get nodes
+NAME            STATUS     ROLES    AGE     VERSION
+192.168.0.145   Ready      <none>   7d19h   v1.19.0
+192.168.0.23    Ready      <none>   7d19h   v1.19.0
+192.168.0.230   Ready      <none>   7d19h   v1.19.0
+192.168.0.89    NotReady   <none>   56s     v1.19.0
+
 
 ```
 
 `注意:` 当新扩容的节点启动后，节点不会立马就绪，因为使用的是Calico 插件，需要将CNI 组件初始化完成后，整个节点才能真正就绪。就绪后，即可真正对外提供服务。
 
+```
+# 当集群的calico插件部署成功后，就能看到节点已经就绪了
+$  kubectl get pods -n calico-system  -o wide  | grep 192.168.0.89
+calico-node-zkbq8                          1/1     Running   0          119s    192.168.0.89     192.168.0.89    <none>           <none>
+calico-typha-559c75f66d-dsqww              1/1     Running   0          49s     192.168.0.89     192.168.0.89    <none>           <none>
+
+$ kubectl get nodes | grep 192.168.0.89
+192.168.0.89    Ready    <none>   3m3s    v1.19.0
+
+```
+
+
+### 相关插件部署
+
+addon:
+- [X] [coredns](./manifest/coredns/)
+- [X] [traefik](./manifest/traefik/)
+- [X] [dashboard](./manifest/dashboard/)
+- [X] [prometheus](./manifest/prometheus/)
+- [X] [elk](./manifest/elk/)
+
+#### 1.部署集群内DNS插件
+
+```
+$ kubectl apply -f  manifest/coredns/coredns.yml
+serviceaccount/coredns created
+clusterrole.rbac.authorization.k8s.io/system:coredns created
+clusterrolebinding.rbac.authorization.k8s.io/system:coredns created
+configmap/coredns created
+deployment.apps/coredns created
+service/kube-dns created
+
+# kubectl get pods -n kube-system  | grep dns
+coredns-56bff4d9f4-9bbkg   0/1     CrashLoopBackOff   1          51s
+coredns-56bff4d9f4-9vqwf   0/1     CrashLoopBackOff   1          51s
+
+$ kubectl get pods -n kube-system  -o wide | grep dns
+coredns-56bff4d9f4-9bbkg   1/1     Running   6          6m42s   192.168.94.140   192.168.0.145   <none>           <none>
+coredns-56bff4d9f4-dtqsw   1/1     Running   0          12s     192.168.24.135   192.168.0.23    <none>           <none>
+
+
+# 验证DNS的可用性
+
+$ kubectl get deploy -n myapp
+NAME    READY   UP-TO-DATE   AVAILABLE   AGE
+myapp   1/1     1            1           75m
+
+$ kubectl scale --current-replicas=1 --replicas=3 deployment/myapp -n myapp
+deployment.apps/myapp scaled
+
+
+$ kubectl get pods -n myapp -o wide
+NAME                     READY   STATUS    RESTARTS   AGE   IP               NODE            NOMINATED NODE   READINESS GATES
+myapp-5b7c4fd87c-6q46x   1/1     Running   0          19s   192.168.24.136   192.168.0.23    <none>           <none>
+myapp-5b7c4fd87c-jfv7x   1/1     Running   0          71m   192.168.94.139   192.168.0.145   <none>           <none>
+myapp-5b7c4fd87c-xdr98   1/1     Running   0          19s   192.168.50.135   192.168.0.230   <none>           <none>
+
+# 可以发现，在pod内部直接访问对应的svc 是完全可以直接访问的
+$ kubectl exec -it -n myapp myapp-5b7c4fd87c-6q46x -- curl myapp -I
+HTTP/1.1 200 OK
+Server: nginx/1.19.2
+Date: Mon, 21 Sep 2020 11:42:24 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 11 Aug 2020 14:50:35 GMT
+Connection: keep-alive
+ETag: "5f32b03b-264"
+Accept-Ranges: bytes
+
+$ kubectl exec -it -n myapp myapp-5b7c4fd87c-jfv7x -- curl myapp -I
+HTTP/1.1 200 OK
+Server: nginx/1.19.2
+Date: Mon, 21 Sep 2020 11:42:31 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 11 Aug 2020 14:50:35 GMT
+Connection: keep-alive
+ETag: "5f32b03b-264"
+Accept-Ranges: bytes
+
+$ kubectl exec -it -n myapp myapp-5b7c4fd87c-xdr98  -- curl myapp -I
+HTTP/1.1 200 OK
+Server: nginx/1.19.2
+Date: Mon, 21 Sep 2020 11:42:38 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 11 Aug 2020 14:50:35 GMT
+Connection: keep-alive
+ETag: "5f32b03b-264"
+Accept-Ranges: bytes
+
+
+```
+
+`注意:` 由于在CoreDNS 的配置中，没有配置upstream 和 forward ，因此，默认从集群是无法解析集群外的域名，比如公网服务，这个时候可以配置forward和upstream 的DNS ，同时也可以在每个pod中配置额外的DNS 服务器。
+
+#### 1.部署Traefik-Ingress
+
+```
+# 注意: 有些API已经不支持了，需要进行变更接口版本
+# networking.k8s.io/v1 接口替换了之前 extensions/v1beta1 的Ingress 接口，但是相关的Ingress的Spec不兼容暂时
+$ kubectl apply -f manifest/traefik/
+configmap/traefik-config unchanged
+serviceaccount/traefik-ingress-controller unchanged
+daemonset.apps/traefik-ingress-controller unchanged
+service/traefik-ingress-service unchanged
+serviceaccount/traefik-ingress-controller unchanged
+daemonset.apps/traefik-ingress-controller-v2 unchanged
+service/traefik-ingress-service-v2 unchanged
+clusterrole.rbac.authorization.k8s.io/traefik-ingress-controller unchanged
+clusterrolebinding.rbac.authorization.k8s.io/traefik-ingress-controller unchanged
+service/traefik-web-ui unchanged
+Warning: extensions/v1beta1 Ingress is deprecated in v1.14+, unavailable in v1.22+; use networking.k8s.io/v1 Ingress
+ingress.extensions/traefik-web-ui configured
+
+
+# 给master节点设置污点，不允许其他业务pod调度
+$ kubectl label node 192.168.0.145 node-role.kubernetes.io/master=""
+$ kubectl label node 192.168.0.23 node-role.kubernetes.io/master=""
+$ kubectl label node 192.168.0.230 node-role.kubernetes.io/master=""
+$ kubectl taint nodes 192.168.0.145 node-role.kubernetes.io/master=:NoSchedule
+$ kubectl taint nodes 192.168.0.23 node-role.kubernetes.io/master=:NoSchedule
+$ kubectl taint nodes 192.168.0.230 node-role.kubernetes.io/master=:NoSchedule
+
+$ kubectl get nodes
+NAME            STATUS   ROLES    AGE     VERSION
+192.168.0.145   Ready    master   7d19h   v1.19.0
+192.168.0.23    Ready    master   7d19h   v1.19.0
+192.168.0.230   Ready    master   7d19h   v1.19.0
+192.168.0.89    Ready    <none>   48m     v1.19.0
+
+$ kubectl get daemonset,pods -n kube-system  | grep ingress
+daemonset.apps/traefik-ingress-controller   1         1         1       1            1           <none>          15m
+pod/traefik-ingress-controller-5mlk4   1/1     Running   0          9m15s
+
+$ curl 192.168.0.89
+404 page not found
+
+$ curl 192.168.0.89:8080
+<a href="/dashboard/">Found</a>.
+
+# 测试一下Ingress的虚拟主机
+$ kubectl get ingress -n kube-system
+Warning: extensions/v1beta1 Ingress is deprecated in v1.14+, unavailable in v1.22+; use networking.k8s.io/v1 Ingress
+NAME             CLASS    HOSTS                       ADDRESS   PORTS   AGE
+traefik-web-ui   <none>   prod-traefik-ui.bgbiao.cn             80      17m
+
+# 可以看到，绑host: prod-traefik-ui.bgbiao.cn 后访问Ingress-controller 的地址，和直接访问服务是一样的效果
+$ curl -H 'host: prod-traefik-ui.bgbiao.cn' 192.168.0.89
+<a href="/dashboard/">Found</a>.
+
+
+```
+
+#### 2.部署Dashboard 
+
+`注意:` Dasboard 是官方版本改造后的，只保留了http 的查看权限
+
+```
+$ kubectl apply  -f manifest/dashboard/kubernetes-dashboard-httpv2.0.0-beat4.yaml
+namespace/kubernetes-dashboard created
+serviceaccount/kubernetes-dashboard created
+service/kubernetes-dashboard created
+secret/kubernetes-dashboard-certs created
+secret/kubernetes-dashboard-csrf created
+secret/kubernetes-dashboard-key-holder created
+configmap/kubernetes-dashboard-settings created
+role.rbac.authorization.k8s.io/kubernetes-dashboard created
+clusterrole.rbac.authorization.k8s.io/kubernetes-dashboard created
+rolebinding.rbac.authorization.k8s.io/kubernetes-dashboard created
+clusterrolebinding.rbac.authorization.k8s.io/kubernetes-dashboard created
+deployment.apps/kubernetes-dashboard created
+service/dashboard-metrics-scraper created
+deployment.apps/dashboard-metrics-scraper created
+Warning: extensions/v1beta1 Ingress is deprecated in v1.14+, unavailable in v1.22+; use networking.k8s.io/v1 Ingress
+ingress.extensions/kubernetes-dashboard created
+
+# 查看dashboard相关pod
+## kubernetes-dashboard为dashboard
+## dashboard-metrics-scraper为dashboard中的基础服务监控，需要metrics-server和promethe的支持
+
+$ kubectl get pods,svc -n kubernetes-dashboard
+NAME                                             READY   STATUS    RESTARTS   AGE
+pod/dashboard-metrics-scraper-7b9b99d599-gbkp2   1/1     Running   0          2m14s
+pod/kubernetes-dashboard-845dbf7cc7-vfmzc        1/1     Running   0          2m14s
+
+NAME                                TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                        AGE
+service/dashboard-metrics-scraper   ClusterIP   10.253.116.32   <none>        8000/TCP                       2m14s
+service/kubernetes-dashboard        NodePort    10.253.98.59    <none>        443:30610/TCP,9090:43269/TCP   2m14s
+
+$ curl -H 'host:prod-dashboard.bgbiao.cn'  192.168.0.89 -I
+HTTP/1.1 200 OK
+Accept-Ranges: bytes
+Cache-Control: no-store
+Content-Length: 1262
+Content-Type: text/html; charset=utf-8
+Date: Mon, 21 Sep 2020 12:15:59 GMT
+Last-Modified: Thu, 29 Aug 2019 09:14:59 GMT
+Vary: Accept-Encoding
+
+
+```
+
+此时，就可以使用NodePort方式访问，或者直接使用Ingress进行访问。
+
+
+#### 4.部署metrics
+
+[metrics部署](./manifest/metrics-server/)
+
+```
+# metrics-server 更新了项目后，之前的部署方式有了变化，需要使用如下方式部署
+$ kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.3.7/components.yaml
+....
+....
+
+
+```
+
+#### 5.部署prometheus
+
+[prometheus部署](./manifest/prometheus/readme.md)
+
+`注意:` 官方的示例脚本，在k8s v1.19 版本中有一些不兼容
+
+```
+...
+no matches for kind "Prometheus" in version "monitoring.coreos.com/v1"
+no matches for kind "PrometheusRule" in version "monitoring.coreos.com/v1"
+
+```
+
+#### 6.部署flk
+
+[flk部署](./manifest/elk/)
+
+```
+# es-cluster 
+$ kubectl apply -f  manifest/elk/es-cluster.yaml
+...
+...
+
+$ kubectl  get pods,svc,ingress -n ns-elastic
+Warning: extensions/v1beta1 Ingress is deprecated in v1.14+, unavailable in v1.22+; use networking.k8s.io/v1 Ingress
+NAME                                        READY   STATUS    RESTARTS   AGE
+pod/elasticsearch-data-0                    1/1     Running   0          2m56s
+pod/elasticsearch-data-1                    1/1     Running   0          101s
+pod/elasticsearch-master-7f489b4758-6ggbj   1/1     Running   0          2m56s
+pod/elasticsearch-master-7f489b4758-h6fdh   1/1     Running   0          2m56s
+pod/elasticsearch-master-7f489b4758-sfnkf   1/1     Running   0          2m56s
+
+NAME                                 TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)             AGE
+service/elasticsearch-data-service   ClusterIP   None            <none>        9200/TCP,9300/TCP   2m56s
+service/elasticsearch-discovery      ClusterIP   10.253.182.44   <none>        9300/TCP            2m56s
+service/elasticsearch-service        ClusterIP   10.253.187.28   <none>        9200/TCP            2m56s
+
+NAME                                       CLASS    HOSTS                       ADDRESS   PORTS   AGE
+ingress.extensions/elasticsearch-ingress   <none>   prod-es-cluster.bgbiao.cn             80      2m56s
+
+$ curl -H 'host: prod-es-cluster.bgbiao.cn' 192.168.0.89
+{
+  "name" : "6FTiOtX",
+  "cluster_name" : "elasticsearch-cluster",
+  "cluster_uuid" : "_na_",
+  "version" : {
+    "number" : "6.4.3",
+    "build_flavor" : "default",
+    "build_type" : "tar",
+    "build_hash" : "fe40335",
+    "build_date" : "2018-10-30T23:17:19.084789Z",
+    "build_snapshot" : false,
+    "lucene_version" : "7.4.0",
+    "minimum_wire_compatibility_version" : "5.6.0",
+    "minimum_index_compatibility_version" : "5.0.0"
+  },
+  "tagline" : "You Know, for Search"
+}
+
+# log-polit
+$ kubectl apply -f manifest/elk/log-polit.yaml
+daemonset.apps/log-pilot created
+...
+
+$ kubectl get pods,svc -n kube-system -o wide | grep log 
+pod/log-pilot-459kc                    1/1     Running             0          6m14s   192.168.24.140   192.168.0.23    <none>           <none>
+pod/log-pilot-j5vgg                    1/1     Running             0          6m14s   192.168.94.145   192.168.0.145   <none>           <none>
+pod/log-pilot-j8m4q                    1/1     Running             0          6m6s    192.168.207.12   192.168.0.89    <none>           <none>
+ 
+
+
+# kibana
+
+$ kubectl apply -f manifest/elk/kibana.yaml
+deployment.apps/kb-cluster created
+service/kb-cluster-svc unchanged
+Warning: extensions/v1beta1 Ingress is deprecated in v1.14+, unavaila
+
+...
+...
+
+$ kubectl  get pods -o wide | grep kb
+kb-cluster-ff4f954bc-cwq52   1/1     Running   0          3m23s   192.168.207.13   192.168.0.89   <none>           <none>
+kb-cluster-ff4f954bc-j5tlg   1/1     Running   0          3m23s   192.168.207.14   192.168.0.89   <none>           <none>
+
+$ curl 10.253.214.239:5601
+<script>var hashRoute = '/app/kibana';
+var defaultRoute = '/app/kibana';
+
+var hash = window.location.hash;
+if (hash.length) {
+  window.location = hashRoute + hash;
+} else {
+  window.location = defaultRoute;
 
 
 
-
+```

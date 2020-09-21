@@ -1,11 +1,14 @@
 kind: List
 apiVersion: v1
 items:
-- apiVersion: apps/v1beta1
+- apiVersion: apps/v1
   kind: Deployment
   metadata:
     name: kb-cluster
   spec:
+    selector:
+      matchLabels:
+        app: kb-cluster
     replicas: 2
     template:
       metadata:
@@ -20,7 +23,7 @@ items:
           name: kb
           env:
           - name: ELASTICSEARCH_URL
-            value: "http://prod-es-cluster.bgbiao.cn:80"
+            value: "http://elasticsearch-service.ns-elastic.svc.cluster.local:9200"
           ports:
           - name: http
             containerPort: 5601

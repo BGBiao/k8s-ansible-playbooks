@@ -8,9 +8,14 @@ k8s.gcr.io/metrics-server-amd64:v0.3.4
 
 # 部署
 $ git clone https://github.com/kubernetes-incubator/metrics-server.git
+
+# 老版本部署
 $ cd metrics-server/deploy/
 $ kubectl  apply -f 1.8+/
 
+
+# 新版本部署
+$ kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.3.7/components.yaml
 # 查看部署详情
 
 $ kubectl  get all -n kube-system | grep metrics

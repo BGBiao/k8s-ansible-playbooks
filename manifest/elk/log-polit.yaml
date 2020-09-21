@@ -1,4 +1,4 @@
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: log-pilot
@@ -6,6 +6,9 @@ metadata:
   labels:
     k8s-app: log-pilot
 spec:
+  selector:
+    matchLabels:
+      k8s-app: log-pilot
   updateStrategy:
     type: RollingUpdate
   template:
@@ -18,12 +21,12 @@ spec:
         effect: NoSchedule
       containers:
       - name: log-pilot
-        image: log-pilot:0.9.5-filebeat
+        image: bgbiao/log-pilot:0.9.5-filebeat
         env:
           - name: "LOGGING_OUTPUT"
             value: "elasticsearch"
           - name: "ELASTICSEARCH_HOSTS"
-            value: "prod-es-cluster.bgbiao.cn:80"
+            value: "elasticsearch-service.ns-elastic.svc.cluster.local:9200"
           #- name: "ELASTICSEARCH_USER"
           #  value: "elastic"
           #- name: "ELASTICSEARCH_PASSWORD"

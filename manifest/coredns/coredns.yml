@@ -58,11 +58,11 @@ data:
         ready
         kubernetes cluster.local 20.0.0.0/16  {
           pods insecure
-          upstream 114.114.114.114 223.5.5.5
+          #upstream 114.114.114.114 223.5.5.5
           fallthrough in-addr.arpa ip6.arpa
         }
         prometheus :9153
-        forward . 114.114.114.114 223.5.5.5
+        #forward . 114.114.114.114 223.5.5.5
         cache 30
         loop
         reload
