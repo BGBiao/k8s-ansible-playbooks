@@ -403,7 +403,8 @@ componentstatus/etcd-1               Healthy   {"health":"true"}   Warning: v1 C
 
 #### 0.生成bootstrap配置文件和kube-proxy配置文件
 
-````
+```
+
 $ export BOOTSTRAP_TOKEN=`cat /data/kubernetes/cfg/token.csv  | awk -F ',' '{print $1}'`
 $ echo ${BOOTSTRAP_TOKEN}
 
@@ -430,6 +431,7 @@ $ kubectl config use-context default --kubeconfig=kube-proxy.kubeconfig
 
 # 在集群中创建一个用于bootstrap 的clusterrolebinding 将system:node-bootstrapper 角色绑定至用户kubelet-bootstrap 
 $ kubectl create clusterrolebinding kubelet-bootstrap --clusterrole=system:node-bootstrapper --user=kubelet-bootstrap
+
 ```
 
 然后将生成的`bootstrap.kubeconfig` 和 `kube-proxy.kubeconfig` 拷贝到项目的 `templates/` 下。
@@ -457,7 +459,7 @@ PLAY RECAP *********************************************************************
 此时，如果节点上的`docker`服务没有启动，直接启动`kubelet`会提示`kubelet.service`不存在。
 
 
-#### 3.部署Runtime 运行时Docker组件
+#### 2.部署Runtime 运行时Docker组件
 
 ```
 # 这里需要先部署docker的运行时
@@ -479,7 +481,7 @@ $ ansible -i hosts all -m shell -a "systemctl daemon-reload && systemctl restart
 ```
 
 
-#### 4.配置Node节点，并生成kubelet证书
+#### 3.配置Node节点，并生成kubelet证书
 
 ```
 $ ansible -i hosts all -m shell -a "systemctl daemon-reload && systemctl restart kubelet kube-proxy"
@@ -741,3 +743,104 @@ IPv4 BGP status
 +---------------+-------------------+-------+----------+-------------+
 
 ```
+
+#### 6.测试集群网络
+
+`注意:` 集群中的一些插件以及测试程序，均可以使用项目中`manifest`中的项目
+
+```
+$ kubectl apply -f manifest/myapp.yml
+namespace/myapp created
+service/myapp created
+deployment.apps/myapp created
+
+$ kubectl get pods -n myapp -o wide
+NAME                     READY   STATUS    RESTARTS   AGE   IP               NODE            NOMINATED NODE   READINESS GATES
+myapp-5b7c4fd87c-jfv7x   1/1     Running   0          32s   192.168.94.139   192.168.0.145   <none>           <none>
+
+# 可以看到，在整个集群内对该容器的pod ip 都是可以直接访问的
+
+$ ansible -i hosts all -m shell -a "curl -s 192.168.94.139 -I "
+192.168.0.230 | CHANGED | rc=0 >>
+HTTP/1.1 200 OK
+Server: nginx/1.19.2
+Date: Mon, 21 Sep 2020 10:28:40 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 11 Aug 2020 14:50:35 GMT
+Connection: keep-alive
+ETag: "5f32b03b-264"
+Accept-Ranges: bytes
+192.168.0.23 | CHANGED | rc=0 >>
+HTTP/1.1 200 OK
+Server: nginx/1.19.2
+Date: Mon, 21 Sep 2020 10:28:40 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 11 Aug 2020 14:50:35 GMT
+Connection: keep-alive
+ETag: "5f32b03b-264"
+Accept-Ranges: bytes
+192.168.0.145 | CHANGED | rc=0 >>
+HTTP/1.1 200 OK
+Server: nginx/1.19.2
+Date: Mon, 21 Sep 2020 10:28:40 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 11 Aug 2020 14:50:35 GMT
+Connection: keep-alive
+ETag: "5f32b03b-264"
+Accept-Ranges: bytes
+
+```
+
+#### 7.配置证书自动轮转
+
+`注意:` 至此，我们一个基本可用的k8s集群已经完全部署成功了，但是，细心的人会发现，如果我们每次在扩容node节点时，都需要手动的进行准许 kubelet 的CSR 请求，然后给 node 节点颁发客户端证书，如此是一个很不自动化，且很影响效率的工作。
+
+接下来，我们只需要使用集群的管理员角色，对集群设置 `自定请求准许和证书轮转`。
+
+```
+# 绑定集群相关角色
+
+$ kubectl apply -f manifest/auto-csr/auto-approve-node-clusterRole.yml
+clusterrole.rbac.authorization.k8s.io/approve-node-client-csr configured
+clusterrole.rbac.authorization.k8s.io/approve-node-client-renewal-csr configured
+clusterrole.rbac.authorization.k8s.io/approve-node-server-renewal-csr configured
+
+$ kubectl apply -f manifest/auto-csr/auto-approve-node-clusterRoleBinding.yml
+clusterrolebinding.rbac.authorization.k8s.io/node-client-auto-approve-csr created
+clusterrolebinding.rbac.authorization.k8s.io/node-client-auto-renew-crt created
+clusterrolebinding.rbac.authorization.k8s.io/node-server-auto-renew-crt created
+
+
+```
+
+配置证书自动轮转后，后期当我们需要对集群增加node节点时，只需要进行一键部署，之后当kubelet 进程启动后，集群会自动对节点进行 请求准许和证书颁发。
+
+#### 8.集群Node节点扩容
+
+当整个集群都配置就绪后，新扩容一个节点需要执行 以下ansible-playbooks 即可快速添加节点。
+
+- os-init.yml: 系统初始化，内核层面的包，存储，标准化目录等等
+- docker-install.yml: 容器运行时
+- k8s-slave-install.yml: 一键初始化node节点
+
+```
+
+$ ansible-playbook -i hosts -e host=node-new os-init.yml 
+$ ansible-playbook -i hosts -e host=node-new docker-install.yml
+$ ansible-playbook -i hosts -e host=node-new k8s-slave-install.yml 
+
+# 依次启动flanneld,docker,kubelet和kube-proxy服务
+$ ansible -i hosts node-new -m shell -a " systemctl daemon-reload && systemctl restart docker kubelet kube-proxy && systemctl enable docker kubelet kube-proxy"
+
+
+```
+
+`注意:` 当新扩容的节点启动后，节点不会立马就绪，因为使用的是Calico 插件，需要将CNI 组件初始化完成后，整个节点才能真正就绪。就绪后，即可真正对外提供服务。
+
+
+
+
+
