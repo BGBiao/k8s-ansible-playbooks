@@ -943,7 +943,7 @@ Accept-Ranges: bytes
 
 `注意:` 由于在CoreDNS 的配置中，没有配置upstream 和 forward ，因此，默认从集群是无法解析集群外的域名，比如公网服务，这个时候可以配置forward和upstream 的DNS ，同时也可以在每个pod中配置额外的DNS 服务器。
 
-#### 1.部署Traefik-Ingress
+#### 2.部署Traefik-Ingress
 
 ```
 # 注意: 有些API已经不支持了，需要进行变更接口版本
@@ -1007,7 +1007,7 @@ $ curl -H 'host: prod-traefik-ui.bgbiao.cn' 192.168.0.89
 
 ```
 
-#### 2.部署Dashboard 
+#### 3.部署Dashboard 
 
 `注意:` Dasboard 是官方版本改造后的，只保留了http 的查看权限
 
