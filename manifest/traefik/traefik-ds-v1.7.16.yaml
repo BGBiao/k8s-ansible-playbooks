@@ -23,6 +23,18 @@ spec:
         k8s-app: traefik-ingress-lb
         name: traefik-ingress-lb
     spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/master
+                operator: DoesNotExist
+              - key: type
+                operator: In
+                values:
+                - infra
+    spec:
       serviceAccountName: traefik-ingress-controller
       terminationGracePeriodSeconds: 60
       hostNetwork: true
@@ -34,7 +46,8 @@ spec:
           containerPort: 80
           hostPort: 80
         - name: admin
-          containerPort: 8080
+          containerPort: 8081
+          hostPort: 8081
         securityContext:
           capabilities:
             drop:

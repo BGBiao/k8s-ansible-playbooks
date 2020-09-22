@@ -18,18 +18,14 @@ data:
       [entryPoints.https]
       address = ":443"
         [entryPoints.https.tls]
-    #Config to redirect http to https
-    #[entryPoints]
-    #  [entryPoints.http]
-    #  address = ":80"
-    #  compress = true
-    #    [entryPoints.http.redirect]
-    #    entryPoint = "https"
-    #  [entryPoints.https]
-    #  address = ":443"
-    #    [entryPoints.https.tls]
-    [web]
-      address = ":8080"
+      # dashboard 
+      [entryPoints.traefik]
+      address = ":8081"
+    # 定义一个api接口中的entrypoint 指定dashboard 端口
+    [api]
+      entryPoint = "traefik"
+      dashboard = true
+
     [kubernetes]
     [metrics]
       [metrics.prometheus]
