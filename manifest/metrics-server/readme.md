@@ -4,7 +4,11 @@
 
 ```
 # 镜像准备(换成可下载地址)
-k8s.gcr.io/metrics-server-amd64:v0.3.4
+k8s.gcr.io/metrics-server-amd64:v0.3.4 -> bgbiao/metrics-server:v0.3.4
+
+
+k8s.gcr.io/metrics-server/metrics-server:v0.3.7 -> bgbiao/metrics-server:v0.3.7 
+
 
 # 部署
 $ git clone https://github.com/kubernetes-incubator/metrics-server.git
